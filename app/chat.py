@@ -3,7 +3,7 @@ import difflib
 import json
 
 from . import db, llm, store
-from .analyzer import actions_of, triggers_of
+from .analyzer import actions_of, cfg_hash, triggers_of
 
 SYSTEM = """Du bist HA-Fix, ein Assistent für Home-Assistant-Automationen. Der Nutzer beschreibt, was ihn an einer \
 Automation oder einem Ablauf stört. Du bekommst relevante Automationen (YAML) und echte Entitäten aus seinem System.
@@ -47,11 +47,19 @@ def diff_text(old, new) -> str:
     return "\n".join(difflib.unified_diff(a, b, "vorher", "nachher", lineterm="", n=3))
 
 
+def create_proposal(conv_id, target, title, explanation, old, new, warns, source="chat", cfg_hash=None) -> int:
+    return db.x(
+        "INSERT INTO proposals(conv_id, target_id, title, explanation, old_config, new_config, warnings, source, cfg_hash) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (conv_id, target, title, explanation, json.dumps(old) if old else None, json.dumps(new),
+         json.dumps(warns), source, cfg_hash))
+
+
 def proposal_view(p: dict) -> dict:
     old = json.loads(p["old_config"]) if p["old_config"] else None
     new = json.loads(p["new_config"])
     return {**{k: p[k] for k in ("id", "conv_id", "target_id", "title", "explanation", "status", "error",
-                                 "backup", "created", "applied")},
+                                 "backup", "created", "applied", "source")},
             "warnings": json.loads(p["warnings"] or "[]"), "is_new": old is None,
             "old_yaml": store.to_yaml(old) if old else "", "new_yaml": store.to_yaml(new),
             "diff": diff_text(old, new)}
@@ -100,11 +108,9 @@ async def handle_message(settings: dict, conv_id: int | None, message: str,
                 old = existing["config"] if existing and existing["config"] else None
                 if old is None:
                     target = "new"
-                proposal_id = db.x(
-                    "INSERT INTO proposals(conv_id, target_id, title, explanation, old_config, new_config, warnings) "
-                    "VALUES(?,?,?,?,?,?,?)",
-                    (conv_id, target, str(prop.get("title") or cfg["alias"]), str(prop.get("explanation") or ""),
-                     json.dumps(old) if old else None, json.dumps(cfg), json.dumps(warns)))
+                proposal_id = create_proposal(
+                    conv_id, target, str(prop.get("title") or cfg["alias"]), str(prop.get("explanation") or ""),
+                    old, cfg, warns, "chat", cfg_hash(old) if old else None)
                 if revise_proposal:
                     db.x("UPDATE proposals SET status='superseded' WHERE id=? AND status='pending'", (revise_proposal,))
             else:

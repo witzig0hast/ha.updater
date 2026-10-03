@@ -11,12 +11,13 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import analyzer, backup, chat, db, llm, review, scanner, store
+from . import analyzer, backup, chat, db, llm, review, scanner, store, suggest
 from .ha_client import HAError, from_settings
 
 app = FastAPI(title="HA-Fix")
 PASSWORD = os.environ.get("HAFIX_PASSWORD")
 jobs: dict[str, dict] = {"scan": {"running": False, "msg": "", "error": None},
+                         "run": {"running": False, "msg": "", "error": None, "ai_error": None, "done": 0, "total": 0},
                          "review": {"running": False, "done": 0, "total": 0, "current": "", "error": None,
                                     "cancel": False}}
 
@@ -86,28 +87,60 @@ async def ollama_models():
 
 
 # ---------- Scan / Gehirn ----------
-async def run_scan(reason: str = "scan"):
-    job = jobs["scan"]
-    job.update(running=True, error=None, msg="Starte …")
+async def do_scan(progress):
     s = db.get_settings()
-    ha = None
+    ha = from_settings(s)
     try:
-        ha = from_settings(s)
-        brain = await scanner.scan(ha, lambda m: job.update(msg=m))
-        job["msg"] = "Analysiere Logik …"
+        brain = await scanner.scan(ha, progress)
+        progress("Analysiere Logik …")
         refs, findings = analyzer.analyze(brain)
         if s["backup_on_scan"]:
-            job["msg"] = "Erstelle Backup …"
+            progress("Erstelle Backup …")
             backup.write(brain["items"], "scan", brain["ha_version"])
         store.save_brain(brain, refs, findings)
+        return store.get_brain()  # inkl. Querverweisen
+    finally:
+        await ha.close()
+
+
+async def run_scan():
+    job = jobs["scan"]
+    job.update(running=True, error=None, msg="Starte …")
+    try:
+        brain = await do_scan(lambda m: job.update(msg=m))
         job["msg"] = f"Fertig: {len(brain['entities'])} Entitäten, {len(brain['items'])} Automationen/Skripte/Szenen"
     except Exception as e:  # Fehler in der UI anzeigen
         job["error"] = str(e)
         job["msg"] = "Fehlgeschlagen"
     finally:
         job["running"] = False
-        if ha:
-            await ha.close()
+
+
+MAX_SUGGESTIONS = int(os.environ.get("MAX_SUGGESTIONS", "12"))
+
+
+async def run_all():
+    """Alles in einem: scannen, analysieren, dann die KI Vorschläge erzeugen lassen."""
+    job = jobs["run"]
+    job.update(running=True, error=None, ai_error=None, msg="Starte …", done=0, total=0)
+    try:
+        brain = await do_scan(lambda m: job.update(msg=m))
+        suggest.retire_stale(brain)
+        todo = suggest.candidates(brain, MAX_SUGGESTIONS)
+        job["total"] = len(todo)
+        s = db.get_settings()
+        for n, (it, fs) in enumerate(todo, 1):
+            job.update(msg=f"KI prüft „{it['alias']}“ ({n}/{len(todo)})", done=n - 1)
+            try:
+                await suggest.suggest_for(s, brain, it, fs)
+            except llm.LLMError as e:
+                job["ai_error"] = str(e)
+                break
+        job.update(msg="Fertig", done=len(todo))
+    except Exception as e:
+        job.update(error=str(e), msg="Fehlgeschlagen")
+    finally:
+        job["running"] = False
 
 
 @app.post("/api/scan")
@@ -116,6 +149,37 @@ async def start_scan():
         raise HTTPException(409, "Scan läuft bereits.")
     asyncio.create_task(run_scan())
     return jobs["scan"]
+
+
+@app.post("/api/run")
+async def start_run():
+    if jobs["run"]["running"] or jobs["scan"]["running"]:
+        raise HTTPException(409, "Läuft bereits.")
+    asyncio.create_task(run_all())
+    return jobs["run"]
+
+
+@app.get("/api/home")
+async def home():
+    """Alles, was die einzige Seite der UI braucht."""
+    s = db.get_settings()
+    b = store.get_brain()
+    out = {"configured": bool(s["ha_url"] and s["ha_token"]), "read_only": s["read_only"],
+           "run": jobs["run"], "scanned_at": b["scanned_at"] if b else None, "proposals": [], "notes": []}
+    if not b:
+        return out
+    out["counts"] = {"automations": sum(1 for i in b["items"] if i["kind"] == "automation"),
+                     "entities": len(b["entities"])}
+    pend = db.q("SELECT * FROM proposals WHERE status='pending' ORDER BY id DESC")
+    out["proposals"] = [chat.proposal_view(p) for p in pend]
+    covered = {p["target_id"] for p in pend}
+    for f in db.q("SELECT * FROM findings WHERE severity != 'info' ORDER BY CASE severity WHEN 'high' THEN 0 "
+                  "WHEN 'medium' THEN 1 ELSE 2 END, id"):
+        if f["category"] in suggest.FIXABLE and f["item_id"] in covered:
+            continue
+        out["notes"].append({k: f[k] for k in ("severity", "title", "detail")})
+    out["notes"] = out["notes"][:40]
+    return out
 
 
 @app.get("/api/scan/status")
@@ -293,12 +357,12 @@ async def reject(pid: int):
 
 
 @app.post("/api/proposals/{pid}/approve")
-async def approve(pid: int):
-    """Backup -> schreiben. Nur wenn die Schreibsperre in den Einstellungen aufgehoben ist."""
+async def approve(pid: int, body: dict | None = None):
+    """Backup -> schreiben. Bei aktiver Schreibsperre nur mit ausdrücklicher Bestätigung für diesen einen Vorschlag."""
     p = get_proposal(pid)
     s = db.get_settings()
-    if s["read_only"]:
-        raise HTTPException(403, "Schreibsperre aktiv (Einstellungen). Es wird nichts an Home Assistant geändert.")
+    if s["read_only"] and not (body or {}).get("confirm_write"):
+        raise HTTPException(403, "Schreibsperre aktiv. Es wird nichts an Home Assistant geändert.")
     if p["status"] != "pending":
         raise HTTPException(409, f"Vorschlag hat Status „{p['status']}“.")
     cfg = json.loads(p["new_config"])
@@ -315,6 +379,8 @@ async def approve(pid: int):
         raise
     finally:
         await ha.close()
+    db.x("UPDATE proposals SET status='superseded' WHERE target_id=? AND status='pending' AND id != ?",
+         (p["target_id"], pid))
     asyncio.create_task(run_scan())  # Gehirn auffrischen
     return chat.proposal_view(get_proposal(pid))
 

@@ -72,8 +72,8 @@ def test_chat_proposal_readonly_gate_and_apply(client):
     # Schreibsperre standardmäßig aktiv
     assert client.post(f"/api/proposals/{p['id']}/approve").status_code == 403
     assert fakes.POSTS == []
-    client.put("/api/settings", json={"read_only": False})
-    a = client.post(f"/api/proposals/{p['id']}/approve").json()
+    a = client.post(f"/api/proposals/{p['id']}/approve", json={"confirm_write": True}).json()
+    assert client.get("/api/settings").json()["read_only"] is True   # Sperre bleibt an
     assert a["status"] == "applied" and a["backup"]
     assert fakes.POSTS[-1][1] == "a2" and fakes.POSTS[-1][2]["mode"] == "restart"
     wait(client, "/api/scan/status", "running")
@@ -90,3 +90,36 @@ def test_revise_supersedes(client):
     assert ps[r1["proposal"]["id"]] == "superseded" and ps[r2["proposal"]["id"]] == "pending"
     system = [c for c in __import__("tests.fakes", fromlist=["x"]).OLLAMA_CALLS][-1]["messages"][0]["content"]
     assert "Bisheriger Vorschlag" in system
+
+
+def test_run_creates_automatic_suggestions(client):
+    """Ein Klick: scannen + KI schlägt selbst Korrekturen vor; Hinweise bleiben als Notes."""
+    assert client.post("/api/run").status_code == 200
+    for _ in range(100):
+        h = client.get("/api/home").json()
+        if not h["run"]["running"]:
+            break
+        time.sleep(0.1)
+    assert h["run"]["error"] is None and h["run"]["ai_error"] is None, h["run"]
+    auto = [p for p in h["proposals"] if p["source"] == "auto"]
+    assert auto, h
+    assert all(p["diff"] and p["status"] == "pending" for p in auto)
+    assert h["notes"] and h["configured"] and h["counts"]["automations"] == 4
+    # Zweiter Lauf erzeugt keine Duplikate
+    n = len(auto)
+    client.post("/api/run")
+    for _ in range(100):
+        h2 = client.get("/api/home").json()
+        if not h2["run"]["running"]:
+            break
+        time.sleep(0.1)
+    assert len([p for p in h2["proposals"] if p["source"] == "auto"]) == n
+    # Verwerfen: wird nicht erneut vorgeschlagen
+    pid = auto[0]["id"]
+    client.post(f"/api/proposals/{pid}/reject")
+    client.post("/api/run")
+    for _ in range(100):
+        if not client.get("/api/home").json()["run"]["running"]:
+            break
+        time.sleep(0.1)
+    assert pid not in [p["id"] for p in client.get("/api/home").json()["proposals"]]

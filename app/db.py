@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS proposals (
   id INTEGER PRIMARY KEY AUTOINCREMENT, conv_id INTEGER, target_id TEXT, title TEXT,
   explanation TEXT, old_config TEXT, new_config TEXT, warnings TEXT,
-  status TEXT DEFAULT 'pending', error TEXT, backup TEXT,
+  status TEXT DEFAULT 'pending', error TEXT, backup TEXT, source TEXT DEFAULT 'chat', cfg_hash TEXT,
   created TEXT DEFAULT CURRENT_TIMESTAMP, applied TEXT);
 """
 

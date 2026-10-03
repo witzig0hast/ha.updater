@@ -104,7 +104,12 @@ def make_ollama():
         body = await request.json()
         OLLAMA_CALLS.append(body)
         sys_prompt = body["messages"][0]["content"]
-        if "bewertest eine Automation" in sys_prompt:
+        if "Erkannte Probleme" in body["messages"][-1]["content"]:
+            out = {"title": "Problem beheben", "explanation": "Test-Erklärung.",
+                   "config": {"alias": "Repariert", "mode": "restart",
+                              "triggers": [{"trigger": "state", "entity_id": "binary_sensor.flur_bewegung", "to": "on"}],
+                              "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.flur"}}]}}
+        elif "bewertest eine Automation" in sys_prompt:
             out = {"verdict": "verbesserbar", "summary": "Test", "issues": ["x"], "suggestion": "y"}
         else:
             out = {"reply": "Ich schlage vor, den Konflikt zu beheben.",

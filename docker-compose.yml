@@ -1,5 +1,6 @@
 services:
   ha-fix:
+    image: ghcr.io/witzig0hast/ha.updater:latest
     build: .
     container_name: ha-fix
     restart: unless-stopped
@@ -7,13 +8,12 @@ services:
       - "8099:8099"
     volumes:
       - ./data:/data
-    # Ollama läuft auf dem Host -> Container erreicht ihn über host.docker.internal
+    # Ollama läuft auf dem Host -> der Container erreicht ihn über host.docker.internal
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      # Alles optional, kann auch in der UI unter "Einstellungen" gesetzt werden
       - OLLAMA_URL=http://host.docker.internal:11434
       - OLLAMA_MODEL=hermes3:8b
-      # - HA_URL=http://homeassistant.local:8123
-      # - HA_TOKEN=...
-      # - HAFIX_PASSWORD=...   # optionaler Passwortschutz der UI (Benutzer: hafix)
+      # Optional:
+      # - HAFIX_PASSWORD=geheim     # Passwortschutz der Oberfläche (Benutzername egal)
+      # - MAX_SUGGESTIONS=12        # so viele Automationen prüft die KI pro Lauf
