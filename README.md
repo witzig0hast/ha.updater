@@ -1,4 +1,4 @@
-# HA-Fix 🧠
+# HA-Fix
 
 Dashboard, das dein Home Assistant **vollständig einliest**, daraus ein „Gehirn" aufbaut, die Logik deiner
 Automationen prüft und dir über einen Chat **Änderungsvorschläge** macht – effizient, lokal und sicher.

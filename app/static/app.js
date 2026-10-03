@@ -17,11 +17,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const diffHtml = d => d.split('\n').filter(l => !l.startsWith('--- ') && !l.startsWith('+++ ')).map(l => `<span class="${l[0]==='+'?'a':l[0]==='-'?'d':l[0]==='@'?'h':''}">${esc(l)||' '}</span>`).join('');
 const fmt = ts => ts ? new Date(ts).toLocaleString('de-DE') : '–';
 
+const theme = {
+  get() { try { return localStorage.getItem('theme') || 'dark'; } catch { return 'dark'; } },
+  set(t) { document.documentElement.dataset.theme = t; try { localStorage.setItem('theme', t); } catch {} },
+};
+theme.set(theme.get());
+document.addEventListener('click', e => { if (e.target.closest('#theme')) theme.set(theme.get() === 'dark' ? 'light' : 'dark'); });
+
 async function loadSettings() {
   settings = await api('/settings');
   const l = $('#lock');
   l.className = 'lock ' + (settings.read_only ? 'ro' : 'rw');
-  l.textContent = settings.read_only ? '🔒 Nur lesen' : '✏️ Schreiben erlaubt';
+  l.innerHTML = `<span class="dot"></span>${settings.read_only ? 'Nur lesen' : 'Schreiben erlaubt'}`;
 }
 
 const views = {chat, brain, items, proposals, backups, settings: settingsView};
@@ -30,6 +37,7 @@ async function route() {
   const [name, ...rest] = (location.hash.slice(1) || 'chat').split('/');
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('on', a.dataset.v === name));
   await loadSettings();
+  const v = $('#view'); v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter');
   try { await (views[name] || chat)(...rest.map(decodeURIComponent)); }
   catch (e) { $('#view').innerHTML = `<div class="card err">${esc(e.message)}</div>`; }
 }
@@ -39,14 +47,14 @@ addEventListener('hashchange', route);
 function proposalCard(p) {
   if (!p) return '';
   const st = {pending:'wartet auf Freigabe', applied:'angewendet', rejected:'abgelehnt', failed:'fehlgeschlagen', superseded:'überholt'}[p.status] || p.status;
-  const warn = p.warnings.map(w => `<div class="note">⚠️ ${esc(w)}</div>`).join('');
+  const warn = p.warnings.map(w => `<div class="note">${esc(w)}</div>`).join('');
   const acts = p.status === 'pending' ? `
     <div class="row" style="margin-top:10px">
-      <button class="ok" onclick="approve(${p.id})" ${settings.read_only ? 'disabled title="Schreibsperre aktiv"' : ''}>✔ Zustimmen & anwenden</button>
-      <button class="sec" onclick="revise(${p.id})">✎ Änderung vorschlagen</button>
+      <button class="ok" onclick="approve(${p.id})" ${settings.read_only ? 'disabled title="Schreibsperre aktiv"' : ''}>Zustimmen &amp; anwenden</button>
+      <button class="sec" onclick="revise(${p.id})">Änderung vorschlagen</button>
       <button class="bad" onclick="rejectP(${p.id})">Verwerfen</button>
-    </div>${settings.read_only ? '<div class="mute" style="margin-top:6px">🔒 Schreibsperre aktiv – Anwenden ist in den Einstellungen gesperrt. Vorschlag bleibt gespeichert.</div>' : ''}` : '';
-  return `<div class="card" style="margin-top:10px"><b>${p.is_new ? '➕ Neue Automation' : '✎ Änderung'}: ${esc(p.title)}</b>
+    </div>${settings.read_only ? '<div class="mute" style="margin-top:6px">Schreibsperre aktiv – Anwenden ist in den Einstellungen gesperrt. Vorschlag bleibt gespeichert.</div>' : ''}` : '';
+  return `<div class="card" style="margin-top:10px"><b>${p.is_new ? 'Neue Automation' : 'Änderung'}: ${esc(p.title)}</b>
     <span class="pill">${st}</span><div class="mute">${esc(p.explanation)}</div>${warn}
     <pre class="diff">${diffHtml(p.diff || p.new_yaml)}</pre>${p.error ? `<div class="err">${esc(p.error)}</div>` : ''}
     ${p.backup ? `<div class="mute">Backup vor Änderung: ${esc(p.backup)}</div>` : ''}${acts}</div>`;
@@ -75,7 +83,7 @@ async function send() {
   if (!text) return;
   const log = $('#chatlog'); ta.value = '';
   log.insertAdjacentHTML('beforeend', bubble('user', text));
-  log.insertAdjacentHTML('beforeend', '<div class="msg assistant mute" id="think">Denke nach … (das lokale Modell braucht einen Moment)</div>');
+  log.insertAdjacentHTML('beforeend', '<div class="msg assistant" id="think"><span class="typing"><i></i><i></i><i></i></span><span class="mute"> Das lokale Modell denkt nach</span></div>');
   log.scrollTop = log.scrollHeight; $('#send').disabled = true;
   try {
     const r = await api('/chat', {body: {message: text, conv_id: convId, revise_proposal: reviseId}});
@@ -84,7 +92,7 @@ async function send() {
   } catch (e) { $('#think').outerHTML = `<div class="msg assistant err">${esc(e.message)}</div>`; }
   $('#send').disabled = false; log.scrollTop = log.scrollHeight;
 }
-window.revise = id => { reviseId = id; $('#revhint').textContent = `✎ Überarbeitung von Vorschlag #${id} – beschreibe, was anders sein soll.`; $('#msg').focus(); };
+window.revise = id => { reviseId = id; $('#revhint').textContent = `Überarbeitung von Vorschlag #${id} – beschreibe, was anders sein soll.`; $('#msg').focus(); };
 window.rejectP = async id => { await api(`/proposals/${id}/reject`, {method: 'POST'}); route(); };
 window.approve = async id => {
   if (!confirm('Backup erstellen und diese Änderung in Home Assistant schreiben?')) return;
@@ -97,7 +105,7 @@ async function brain() {
   const b = await api('/brain'), st = await api('/scan/status'), rv = await api('/review/status');
   const sev = b.findings || {};
   $('#view').innerHTML = `<div class="row" style="justify-content:space-between"><h2>Gehirn</h2>
-    <div class="row"><button id="scan">${b.scanned ? '↻ Neu scannen' : '🧠 Gehirn aufbauen'}</button>
+    <div class="row"><button id="scan">${b.scanned ? 'Neu scannen' : 'Gehirn aufbauen'}</button>
     <button class="sec" id="rev" ${b.scanned ? '' : 'disabled'}>KI-Review starten</button></div></div>
     <div id="jobs"></div>
     ${b.scanned ? `<div class="mute">${esc(b.location || '')} · HA ${esc(b.ha_version)} · Scan: ${fmt(b.scanned_at)}</div>
@@ -129,7 +137,7 @@ const bars = o => { const m = Math.max(1, ...Object.values(o)); return Object.en
 async function loadFindings(sev) {
   const f = await api('/findings' + (sev ? '?severity=' + sev : ''));
   $('#findings').innerHTML = f.length ? `<table>${f.map(x => `<tr class="${x.item_id ? 'click' : ''}" ${x.item_id ? `onclick="location.hash='#items/${x.item_kind}/${encodeURIComponent(x.item_id)}'"` : ''}>
-    <td><span class="pill sev-${x.severity}">${SEV[x.severity]}</span></td><td>${esc(x.title)}<div class="mute">${esc(x.detail)}</div></td></tr>`).join('')}</table>` : '<span class="mute">Keine Befunde 🎉</span>';
+    <td><span class="pill sev-${x.severity}">${SEV[x.severity]}</span></td><td>${esc(x.title)}<div class="mute">${esc(x.detail)}</div></td></tr>`).join('')}</table>` : '<span class="mute">Keine Befunde</span>';
 }
 
 // ---------- Automationen ----------
@@ -148,8 +156,8 @@ async function itemDetail(kind, id) {
   const refs = ['trigger', 'condition', 'action'].map(k => d.refs[k].length ? `<h3>${{trigger:'Trigger',condition:'Bedingungen',action:'Aktionen'}[k]}</h3>` +
     d.refs[k].map(e => `<div><code>${esc(e.entity_id)}</code> ${esc(e.name || '')} <span class="mute">${esc(e.state)} ${e.area ? '· ' + esc(e.area) : ''}</span></div>`).join('') : '').join('');
   const rv = d.review;
-  $('#view').innerHTML = `<a href="#items">← zurück</a><h2>${esc(d.alias)} <span class="pill">${esc(d.state)}</span></h2>
-    <div class="row"><button onclick="location.hash='#chat';convId=null;setTimeout(()=>document.getElementById('msg').value='Zu der Automation „${esc(d.alias).replace(/'/g, '')}“: ',50)">💬 Im Chat verbessern</button></div>
+  $('#view').innerHTML = `<a href="#items">Zurück zur Übersicht</a><h2>${esc(d.alias)} <span class="pill">${esc(d.state)}</span></h2>
+    <div class="row"><button onclick="location.hash='#chat';convId=null;setTimeout(()=>document.getElementById('msg').value='Zu der Automation „${esc(d.alias).replace(/'/g, '')}“: ',50)">Im Chat verbessern</button></div>
     ${d.missing.length ? `<div class="note err">Fehlende Entitäten: ${esc(d.missing.join(', '))}</div>` : ''}
     ${d.findings.length ? `<h3>Befunde</h3>${d.findings.map(f => `<div><span class="pill sev-${f.severity}">${SEV[f.severity]}</span> ${esc(f.title)} <span class="mute">${esc(f.detail)}</span></div>`).join('')}` : ''}
     ${rv ? `<h3>KI-Review</h3><div class="card"><span class="pill v-${rv.verdict}">${esc(rv.verdict)}</span> ${esc(rv.summary)}<ul>${rv.issues.map(i => `<li>${esc(i)}</li>`).join('')}</ul>${rv.suggestion ? `<b>Vorschlag:</b> ${esc(rv.suggestion)}` : ''}</div>` : ''}
@@ -189,18 +197,18 @@ async function settingsView() {
     <label>Kontextfenster (num_ctx) – größer = mehr VRAM</label><input id="num_ctx" type="number" step="512" value="${s.num_ctx}">
     <label>Modell im VRAM behalten (keep_alive, z. B. 2m, 0 = sofort entladen)</label><input id="keep_alive" value="${esc(s.keep_alive)}">
     <label>Temperatur</label><input id="temperature" type="number" step="0.1" min="0" max="1" value="${s.temperature}">
-    <div class="mute" style="margin-top:8px">Faustregel für ≤ 10 GB VRAM: 8B-Modell (Q4) ≈ 5 GB + ~0,5 GB KV-Cache bei 4096 Kontext. Auf dem Host zusätzlich <code>OLLAMA_MAX_LOADED_MODELS=1</code> und <code>OLLAMA_NUM_PARALLEL=1</code> setzen.</div></div>
+    <div class="mute" style="margin-top:8px">Faustregel für bis 10 GB VRAM: 8B-Modell (Q4) ca. 5 GB + ~0,5 GB KV-Cache bei 4096 Kontext. Auf dem Host zusätzlich <code>OLLAMA_MAX_LOADED_MODELS=1</code> und <code>OLLAMA_NUM_PARALLEL=1</code> setzen.</div></div>
   <div class="card"><h3 style="margin-top:0">Sicherheit</h3>
-    <label><input type="checkbox" id="read_only" style="width:auto" ${s.read_only ? 'checked' : ''}> 🔒 Schreibsperre: nichts an Home Assistant ändern (nur analysieren & vorschlagen)</label>
+    <label><input type="checkbox" id="read_only" style="width:auto" ${s.read_only ? 'checked' : ''}> Schreibsperre: nichts an Home Assistant ändern (nur analysieren & vorschlagen)</label>
     <label><input type="checkbox" id="backup_on_scan" style="width:auto" ${s.backup_on_scan ? 'checked' : ''}> Bei jedem Scan automatisch ein Backup anlegen</label></div>
-  <div class="row"><button id="save">Speichern</button><span id="saved" class="ok"></span></div>`;
+  <div class="row"><button id="save">Speichern</button><span id="saved" class="okc"></span></div>`;
   const val = id => { const e = $('#' + id); return e.type === 'checkbox' ? e.checked : e.type === 'number' ? Number(e.value) : e.value.trim(); };
   const collect = () => Object.fromEntries(['ha_url','ha_token','ha_verify_ssl','ollama_url','model','num_ctx','keep_alive','temperature','read_only','backup_on_scan'].map(k => [k, val(k)]));
-  $('#save').onclick = async () => { await api('/settings', {method: 'PUT', body: collect()}); await loadSettings(); $('#saved').textContent = '✔ gespeichert'; };
+  $('#save').onclick = async () => { await api('/settings', {method: 'PUT', body: collect()}); await loadSettings(); $('#saved').textContent = 'Gespeichert'; $('#saved').className='okc fade'; };
   $('#tha').onclick = async () => {
     await api('/settings', {method: 'PUT', body: collect()});
     $('#rha').textContent = '…';
-    try { const r = await api('/test/ha', {method: 'POST'}); $('#rha').innerHTML = `<span style="color:var(--ok)">✔ HA ${esc(r.version)} (${esc(r.location)})</span>`; }
+    try { const r = await api('/test/ha', {method: 'POST'}); $('#rha').innerHTML = `<span style="color:var(--ok)">Verbunden: HA ${esc(r.version)} (${esc(r.location)})</span>`; }
     catch (e) { $('#rha').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   };
 }
