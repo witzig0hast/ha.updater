@@ -37,6 +37,13 @@ CONFIGS = {
 POSTS = []
 WIPE_ACTIONS = False  # Testschalter: simuliert ein Modell, das die eigentliche Wirkung "repariert" weg
 
+ENTITY_REGISTRY = [
+    {"entity_id": "light.flur", "id": "f" * 32, "device_id": "dev1", "area_id": "flur", "platform": "hue"},
+]
+DEVICE_REGISTRY = [{"id": "dev1", "name": "Hue", "area_id": "flur"}]
+AREA_REGISTRY = [{"area_id": "flur", "name": "Flur"}]
+REMOVED_ENTITIES = []  # per WebSocket entfernte Entitäten, für Testassertions
+
 
 def make_ha():
     app = FastAPI()
@@ -80,17 +87,21 @@ def make_ha():
         await sock.send_json({"type": "auth_required"})
         await sock.receive_json()
         await sock.send_json({"type": "auth_ok"})
-        data = {
-            "config/entity_registry/list": [
-                {"entity_id": "light.flur", "id": "f" * 32, "device_id": "dev1", "area_id": "flur", "platform": "hue"}],
-            "config/device_registry/list": [{"id": "dev1", "name": "Hue", "area_id": "flur"}],
-            "config/area_registry/list": [{"area_id": "flur", "name": "Flur"}],
-        }
         while True:
             try:
                 m = await sock.receive_json()
             except Exception:
                 return
+            if m.get("type") == "config/entity_registry/remove":
+                eid = m["entity_id"]
+                REMOVED_ENTITIES.append(eid)
+                POSTS.append(("entity", eid, "WS_REMOVE"))
+                ENTITY_REGISTRY[:] = [e for e in ENTITY_REGISTRY if e["entity_id"] != eid]
+                STATES[:] = [s for s in STATES if s["entity_id"] != eid]
+                await sock.send_json({"id": m["id"], "type": "result", "success": True, "result": None})
+                continue
+            data = {"config/entity_registry/list": ENTITY_REGISTRY, "config/device_registry/list": DEVICE_REGISTRY,
+                    "config/area_registry/list": AREA_REGISTRY}
             await sock.send_json({"id": m["id"], "type": "result", "success": True, "result": data[m["type"]]})
 
     return app

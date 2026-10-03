@@ -51,23 +51,32 @@ async function load() {
 }
 
 function suggestion(p) {
+  const isEntity = p.target_kind === 'entity';
+  const isDelete = p.action === 'delete' || isEntity;
   const hasOld = p.analysis_old && p.action !== 'new';
+  const oldLabel = isEntity ? 'Details zur Entität' : 'Voranalyse der bestehenden Automation';
+  const newLabel = isEntity ? 'Was beim Entfernen passiert' : p.action === 'delete' ? 'Was danach fehlt' : 'Analyse des Vorschlags';
   const analysis = (p.analysis_old || p.analysis_new) ? `<details class="analysis"><summary>Analyse</summary>
-    ${hasOld ? `<details><summary>Voranalyse der bestehenden Automation</summary><pre>${esc(p.analysis_old)}</pre></details>` : ''}
-    <details><summary>${p.action === 'delete' ? 'Was danach fehlt' : 'Analyse des Vorschlags'}</summary><pre>${esc(p.analysis_new)}</pre></details>
+    ${hasOld ? `<details><summary>${oldLabel}</summary><pre>${esc(p.analysis_old)}</pre></details>` : ''}
+    <details><summary>${newLabel}</summary><pre>${esc(p.analysis_new)}</pre></details>
   </details>` : '';
-  return `<article class="card sug" data-id="${p.id}">
-    <h3>${esc(p.title)}<span class="tag${p.action === 'delete' ? ' del' : ''}">${p.action === 'delete' ? 'löschen' : p.is_new ? 'neu' : 'Änderung'}</span></h3>
+  const tag = isEntity ? 'Entität' : p.action === 'delete' ? 'löschen' : p.is_new ? 'neu' : 'Änderung';
+  const diff = (!isEntity && (p.diff || p.new_yaml))
+    ? `<details><summary>${p.action === 'delete' ? 'Gelöschte Automation ansehen' : 'Genaue Änderung ansehen'}</summary><pre class="diff">${diffHtml(p.diff || p.new_yaml)}</pre></details>` : '';
+  const adjust = isEntity ? '' : `<button class="sec" data-a="adj">Anpassen</button>`;
+  const form = isEntity ? '' : `<form class="adj" hidden><input placeholder="Was soll anders sein?"><button>Senden</button></form>`;
+  return `<article class="card sug" data-id="${p.id}" data-kind="${p.target_kind}">
+    <h3>${esc(p.title)}<span class="tag${isDelete ? ' del' : ''}">${tag}</span></h3>
     <p>${esc(p.explanation)}</p>
     ${p.warnings.map(w => `<div class="note">${esc(w)}</div>`).join('')}
     ${analysis}
-    <details><summary>${p.action === 'delete' ? 'Gelöschte Automation ansehen' : 'Genaue Änderung ansehen'}</summary><pre class="diff">${diffHtml(p.diff || p.new_yaml)}</pre></details>
+    ${diff}
     <div class="row">
-      <button data-a="ok"${p.action === 'delete' ? ' class="danger"' : ''}>${p.action === 'delete' ? 'Löschen' : 'Übernehmen'}</button>
-      <button class="sec" data-a="adj">Anpassen</button>
+      <button data-a="ok"${isDelete ? ' class="danger"' : ''}>${isDelete ? 'Löschen' : 'Übernehmen'}</button>
+      ${adjust}
       <button class="quiet" data-a="no">Verwerfen</button>
     </div>
-    <form class="adj" hidden><input placeholder="Was soll anders sein?"><button>Senden</button></form>
+    ${form}
   </article>`;
 }
 
@@ -125,13 +134,15 @@ $('#app').addEventListener('click', async e => {
   if (a === 'adj') { const f = $('.adj', card); f.hidden = !f.hidden; if (!f.hidden) $('input', f).focus(); return; }
   if (a === 'no') { await api(`/proposals/${id}/reject`, {}); card.classList.add('gone'); setTimeout(load, 300); return; }
   if (a === 'ok') {
-    const ro = H.read_only, del = b.textContent.trim() === 'Löschen';
+    const ro = H.read_only, isEntity = card.dataset.kind === 'entity', del = b.textContent.trim() === 'Löschen';
     const lbl = del ? 'Löschen' : 'Übernehmen';
-    const yes = await confirmBox(del ? 'Automation löschen?' : 'Änderung übernehmen?',
-      'Vorher wird automatisch ein Backup deiner Automationen angelegt.' + (ro ? `<br><br>Der Schreibschutz ist aktiv. Mit „${lbl}“ erlaubst du diese eine Änderung.` : ''), lbl);
+    const title = isEntity ? 'Entität entfernen?' : del ? 'Automation löschen?' : 'Änderung übernehmen?';
+    const text = (isEntity ? 'Die Entität wird aus der Home-Assistant-Registry entfernt. Meldet sie sich später wieder, legt Home Assistant sie automatisch neu an.'
+      : 'Vorher wird automatisch ein Backup deiner Automationen angelegt.') + (ro ? `<br><br>Der Schreibschutz ist aktiv. Mit „${lbl}“ erlaubst du diese eine Änderung.` : '');
+    const yes = await confirmBox(title, text, lbl);
     if (!yes) return;
     b.disabled = true;
-    try { const p = await api(`/proposals/${id}/approve`, {confirm_write: true}); toast((p.action === 'delete' ? 'Gelöscht. Backup: ' : 'Übernommen. Backup: ') + p.backup); card.classList.add('gone'); setTimeout(load, 300); }
+    try { const p = await api(`/proposals/${id}/approve`, {confirm_write: true}); toast((del ? 'Gelöscht. Backup: ' : 'Übernommen. Backup: ') + p.backup); card.classList.add('gone'); setTimeout(load, 300); }
     catch (x) { toast(x.message); b.disabled = false; }
   }
 });
@@ -170,6 +181,10 @@ $('#lock').onclick = $('#cog').onclick = async () => {
     <label>Ollama-Adresse</label><input id="ollama_url" value="${esc(s.ollama_url)}">
     <label>Modell</label>${mdl}
     <label>Kontextgröße (mehr = mehr VRAM)</label><input id="num_ctx" type="number" step="512" value="${s.num_ctx}">
+    <label>KI-Reparaturen pro Lauf <span class="mute">(ein Modell-Aufruf je Automation – höher = langsamer, aber mehr auf einmal)</span></label>
+    <input id="max_suggestions" type="number" min="1" step="1" value="${s.max_suggestions}">
+    <label>Entität gilt nach wie vielen Tagen „nicht verfügbar“ als verwaist?</label>
+    <input id="stale_days" type="number" min="1" step="1" value="${s.stale_days}">
     <label style="margin-top:18px;color:var(--fg)"><input type="checkbox" id="read_only" ${s.read_only ? 'checked' : ''}>Schreibschutz (Änderungen immer extra bestätigen)</label>
     <div class="mute" style="margin-top:14px;font-size:13px">${bk.length} Backups gespeichert${bk[0] ? `, zuletzt <a href="/api/backups/${encodeURIComponent(bk[0].name)}" target="_blank">${esc(bk[0].name)}</a>` : ''}.
       <a href="#" id="bk">Jetzt Backup erstellen</a></div>
@@ -180,7 +195,8 @@ $('#lock').onclick = $('#cog').onclick = async () => {
     const g = id => $('#' + id, d);
     try {
       await api('/settings', {ha_url: g('ha_url').value.trim(), ha_token: g('ha_token').value.trim(), ollama_url: g('ollama_url').value.trim(),
-        model: g('model').value, num_ctx: Number(g('num_ctx').value), read_only: g('read_only').checked});
+        model: g('model').value, num_ctx: Number(g('num_ctx').value), read_only: g('read_only').checked,
+        max_suggestions: Number(g('max_suggestions').value), stale_days: Number(g('stale_days').value)});
       d.close(); toast('Gespeichert'); load();
     } catch (x) { toast(x.message); }
   };

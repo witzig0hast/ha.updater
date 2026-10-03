@@ -1,8 +1,11 @@
 """Automatische Vorschläge: die KI geht die auffälligen Automationen durch und schlägt Korrekturen vor."""
+import datetime as dt
+import hashlib
 import re
+from collections import defaultdict
 
 from . import chat, db, llm, store
-from .analyzer import cfg_hash, item_key
+from .analyzer import cfg_hash, item_key, parse_ts
 
 # Befunde, bei denen eine Konfigurationsänderung sinnvoll ist (der Rest wird als Hinweis angezeigt)
 FIXABLE = {"fehlende_entitaet", "fehlendes_geraet", "polling", "konflikt", "mode", "nicht_verfuegbar"}
@@ -88,9 +91,75 @@ def propose_dead_deletions(brain: dict) -> int:
     return n
 
 
+def propose_stale_entities(brain: dict, stale_days: int) -> int:
+    """Regelbasiert (ohne KI, läuft daher immer auf ALLE Entitäten): verwaiste oder lange nicht verfügbare
+    Entitäten zum Löschen vorschlagen. Prüft vorher, ob die Entität noch von einer Automation gebraucht wird."""
+    used_by: dict[str, list[str]] = defaultdict(list)
+    for it in brain["items"]:
+        if it["kind"] != "automation":
+            continue
+        r = brain["refs"].get(item_key("automation", it["id"]), {})
+        for e in set(r.get("trigger", []) + r.get("condition", []) + r.get("action", []) + r.get("other", [])):
+            used_by[e].append(it["alias"])
+        for e in r.get("missing", []):
+            used_by[e].append(f"{it['alias']} (verweist bereits auf eine fehlende Entität)")
+
+    now = dt.datetime.now(dt.timezone.utc)
+    n = 0
+    for eid, e in brain["entities"].items():
+        if e.get("disabled"):
+            continue
+        since = None
+        if e["state"] is None:
+            reason = "orphaned"
+        elif e["state"] == "unavailable":
+            last = parse_ts(e.get("last_changed"))
+            if not last or (now - last).days < stale_days:
+                continue
+            reason, since = "unavailable", e["last_changed"]
+        else:
+            continue
+
+        h = hashlib.sha1(f"{reason}:{e['state']}".encode()).hexdigest()[:12]
+        if db.q1("SELECT id FROM proposals WHERE source='auto' AND target_kind='entity' AND target_id=? "
+                 "AND cfg_hash=? AND status IN ('pending', 'rejected', 'applied')", (eid, h)):
+            continue
+
+        refs = used_by.get(eid, [])
+        area = brain["areas"].get(e.get("area_id")) if e.get("area_id") else None
+        dev = brain["devices"].get(e.get("device_id"), {}).get("name") if e.get("device_id") else None
+        label = e["name"] or eid
+        state_txt = ("meldet sich gar nicht mehr (verwaist – Integration oder Gerät vermutlich entfernt)"
+                    if reason == "orphaned" else f"seit {since} nicht erreichbar („unavailable“)")
+        analysis_old = (f"Entität: {label} ({eid})\nBereich: {area or '–'}\nGerät: {dev or '–'}\n"
+                        f"Zustand: {state_txt}\n" +
+                        (f"Wird noch genutzt von: {', '.join(refs)}" if refs
+                         else "Wird von keiner Automation referenziert."))
+        analysis_new = ("Die Entität wird aus der Home-Assistant-Registry entfernt. Meldet sich das Gerät später "
+                        "wieder, legt Home Assistant die Entität automatisch neu an – ein echtes Löschen von "
+                        "Hardware passiert dabei nicht.")
+        warns = ([f"Wird noch von diesen Automationen genutzt: {', '.join(refs)}. Vor dem Löschen prüfen, ob "
+                  "das gewollt ist, sonst funktionieren diese Automationen danach noch weniger."] if refs else [])
+        title = f"„{label}“ entfernen" + (" (verwaist)" if reason == "orphaned" else " (lange nicht erreichbar)")
+        explanation = (f"Meldet sich nicht mehr – vermutlich wurde das Gerät entfernt." if reason == "orphaned"
+                       else f"Seit {since} nicht erreichbar.")
+        chat.create_proposal(None, eid, title, explanation, None, None, warns, "auto", h, "delete_entity",
+                             analysis_old, analysis_new, "entity")
+        n += 1
+    return n
+
+
 def retire_stale(brain: dict) -> None:
-    """Automatische Vorschläge, deren Automation sich inzwischen geändert hat, sind überholt."""
-    for p in db.q("SELECT id, target_id, cfg_hash FROM proposals WHERE source='auto' AND status='pending'"):
+    """Automatische Vorschläge, deren Ziel sich inzwischen geändert hat (oder nicht mehr existiert), sind überholt."""
+    for p in db.q("SELECT id, target_id, cfg_hash, target_kind FROM proposals WHERE source='auto' AND status='pending'"):
+        if p["target_kind"] == "entity":
+            e = brain["entities"].get(p["target_id"])
+            still = e and not e["disabled"] and e["state"] in (None, "unavailable")
+            h = hashlib.sha1(f"{'orphaned' if e and e['state'] is None else 'unavailable'}:"
+                             f"{e['state'] if e else ''}".encode()).hexdigest()[:12]
+            if not still or h != p["cfg_hash"]:
+                db.x("UPDATE proposals SET status='superseded' WHERE id=?", (p["id"],))
+            continue
         it = store.find_item(brain, "automation", p["target_id"])
         if not it or not it["config"] or cfg_hash(it["config"]) != p["cfg_hash"]:
             db.x("UPDATE proposals SET status='superseded' WHERE id=?", (p["id"],))

@@ -190,6 +190,67 @@ def test_auto_suggestion_warns_when_action_gets_wiped(client):
         fakes.WIPE_ACTIONS = False
 
 
+def test_stale_entities_get_checked_and_can_be_deleted(client):
+    """Regelbasiert, unabhängig vom KI-Limit: verwaiste/lange nicht verfügbare Entitäten (und Geräte) finden."""
+    from tests import fakes
+    wait(client, "/api/scan/status", "running")
+    # Ein Gerät, dessen Entitäten komplett verschwunden sind: eine verwaiste (nur Registry) und eine lange "unavailable"
+    fakes.DEVICE_REGISTRY.append({"id": "dev2", "name": "Altes Gerät", "area_id": "flur"})
+    fakes.ENTITY_REGISTRY.append({"entity_id": "sensor.geist1", "id": "1" * 32, "device_id": "dev2",
+                                  "area_id": "flur", "platform": "fake"})
+    fakes.ENTITY_REGISTRY.append({"entity_id": "switch.geist2", "id": "2" * 32, "device_id": "dev2",
+                                  "area_id": "flur", "platform": "fake"})
+    fakes.STATES.append({"entity_id": "switch.geist2", "state": "unavailable",
+                         "attributes": {"friendly_name": "Geist 2"}, "last_changed": "2020-01-01T00:00:00+00:00"})
+    # Eine eigenständige, unbenutzte verwaiste Entität zum Löschen
+    fakes.ENTITY_REGISTRY.append({"entity_id": "sensor.frei_verwaist", "id": "3" * 32, "area_id": "flur",
+                                  "platform": "fake"})
+    # Eine Automation, die die lange nicht verfügbare Entität noch benutzt -> muss als Warnung auftauchen
+    fakes.STATES.append({"entity_id": "automation.nutzt_geist", "state": "on",
+                         "attributes": {"id": "a10", "friendly_name": "Nutzt Geist"}})
+    fakes.CONFIGS["automation"]["a10"] = {"id": "a10", "alias": "Nutzt Geist",
+        "triggers": [{"trigger": "state", "entity_id": "binary_sensor.flur_bewegung", "to": "on"}],
+        "actions": [{"action": "switch.turn_on", "target": {"entity_id": "switch.geist2"}}]}
+
+    assert client.post("/api/run").status_code == 200
+    for _ in range(100):
+        h = client.get("/api/home").json()
+        if not h["run"]["running"]:
+            break
+        time.sleep(0.1)
+    assert h["run"]["error"] is None, h["run"]
+
+    ent_props = {p["target_id"]: p for p in h["proposals"] if p["target_kind"] == "entity"}
+    assert "sensor.geist1" in ent_props and "switch.geist2" in ent_props and "sensor.frei_verwaist" in ent_props
+    geist1, geist2, frei = ent_props["sensor.geist1"], ent_props["switch.geist2"], ent_props["sensor.frei_verwaist"]
+    assert geist1["action"] == "delete_entity" and "verwaist" in geist1["title"]
+    assert "lange nicht erreichbar" in geist2["title"]
+    assert any("Nutzt Geist" in w for w in geist2["warnings"])      # noch von einer Automation genutzt -> Warnung
+    assert not frei["warnings"]                                     # unbenutzt -> keine Warnung
+    assert geist1["diff"] == "" and geist1["new_yaml"] == ""        # kein YAML-Diff bei Entitäten
+    assert "Entität:" in geist1["analysis_old"]
+
+    # Gerätebefund (regelbasiert, ohne KI) als Hinweis sichtbar
+    findings = client.get("/api/findings").json()
+    assert any(f["category"] == "verwaistes_geraet" and "Altes Gerät" in f["title"] for f in findings)
+
+    # Erneuter Lauf erzeugt keine Duplikate
+    n = len(ent_props)
+    client.post("/api/run")
+    for _ in range(100):
+        h2 = client.get("/api/home").json()
+        if not h2["run"]["running"]:
+            break
+        time.sleep(0.1)
+    assert len([p for p in h2["proposals"] if p["target_kind"] == "entity"]) == n
+
+    # Löschen: Backup -> WebSocket-Entfernen -> aus dem Gehirn verschwunden
+    a = client.post(f"/api/proposals/{frei['id']}/approve", json={"confirm_write": True}).json()
+    assert a["status"] == "applied" and a["backup"] and "sensor.frei_verwaist" in fakes.REMOVED_ENTITIES
+    wait(client, "/api/scan/status", "running")
+    assert client.get("/api/entities", params={"q": "frei_verwaist"}).json() == []
+
+
 def test_dead_automation_gets_delete_suggestion(client):
     from tests import fakes
     fakes.STATES.append({"entity_id": "automation.alt", "state": "on",

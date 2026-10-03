@@ -67,13 +67,13 @@ def diff_text(old, new) -> str:
 
 
 def create_proposal(conv_id, target, title, explanation, old, new, warns, source="chat", cfg_hash=None,
-                    action="update", analysis_old=None, analysis_new=None) -> int:
+                    action="update", analysis_old=None, analysis_new=None, target_kind="automation") -> int:
     return db.x(
         "INSERT INTO proposals(conv_id, target_id, title, explanation, old_config, new_config, warnings, source, "
-        "cfg_hash, action, analysis_old, analysis_new) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        "cfg_hash, action, analysis_old, analysis_new, target_kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (conv_id, target, title, explanation, json.dumps(old) if old else None,
          json.dumps(new) if new is not None else None, json.dumps(warns), source, cfg_hash, action,
-         analysis_old, analysis_new))
+         analysis_old, analysis_new, target_kind))
 
 
 def create_delete(brain: dict, item: dict, conv_id=None, source="chat", reason="") -> int:
@@ -85,13 +85,15 @@ def create_delete(brain: dict, item: dict, conv_id=None, source="chat", reason="
 
 
 def proposal_view(p: dict) -> dict:
+    is_entity = p["target_kind"] == "entity"
     old = json.loads(p["old_config"]) if p["old_config"] else None
     new = json.loads(p["new_config"]) if p["new_config"] else None
     return {**{k: p[k] for k in ("id", "conv_id", "target_id", "title", "explanation", "status", "error",
-                                 "backup", "created", "applied", "source", "action", "analysis_old", "analysis_new")},
+                                 "backup", "created", "applied", "source", "action", "analysis_old", "analysis_new",
+                                 "target_kind")},
             "warnings": json.loads(p["warnings"] or "[]"), "is_new": old is None and new is not None,
             "old_yaml": store.to_yaml(old) if old else "", "new_yaml": store.to_yaml(new) if new else "",
-            "diff": diff_text(old, new)}
+            "diff": "" if is_entity else diff_text(old, new)}
 
 
 async def handle_message(settings: dict, conv_id: int | None, message: str,

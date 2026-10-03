@@ -137,20 +137,20 @@ async def run_scan():
         job["running"] = _scan_tasks > 0
 
 
-MAX_SUGGESTIONS = int(os.environ.get("MAX_SUGGESTIONS", "12"))
-
-
 async def run_all():
-    """Alles in einem: scannen, analysieren, dann die KI Vorschläge erzeugen lassen."""
+    """Alles in einem: scannen, analysieren, regelbasiert ALLE Entitäten/Automationen auf Altlasten prüfen,
+    dann die KI für die begrenzte Zahl an Reparaturen, die pro Lauf einen Modell-Aufruf brauchen."""
     job = jobs["run"]
     job.update(running=True, error=None, ai_error=None, msg="Starte …", done=0, total=0)
     try:
+        s = db.get_settings()
         brain = await do_scan(lambda m: job.update(msg=m))
         suggest.retire_stale(brain)
+        job["msg"] = "Prüfe verwaiste/nicht verfügbare Entitäten …"
+        suggest.propose_stale_entities(brain, int(s["stale_days"]))  # regelbasiert, läuft auf ALLE Entitäten
         suggest.propose_dead_deletions(brain)
-        todo = suggest.candidates(brain, MAX_SUGGESTIONS)
+        todo = suggest.candidates(brain, int(s["max_suggestions"]))
         job["total"] = len(todo)
-        s = db.get_settings()
         for n, (it, fs) in enumerate(todo, 1):
             job.update(msg=f"KI prüft „{it['alias']}“ ({n}/{len(todo)})", done=n - 1)
             try:
@@ -391,7 +391,9 @@ async def approve(pid: int, body: dict | None = None):
     ha = from_settings(s)
     try:
         bname = await backup.create_live(ha, f"vor-vorschlag-{pid}")
-        if p["action"] == "delete":
+        if p["target_kind"] == "entity":
+            await ha.remove_entity(p["target_id"])
+        elif p["action"] == "delete":
             await ha.delete(f"/api/config/automation/config/{p['target_id']}")
         else:
             cfg = json.loads(p["new_config"])
@@ -405,8 +407,8 @@ async def approve(pid: int, body: dict | None = None):
         raise
     finally:
         await ha.close()
-    db.x("UPDATE proposals SET status='superseded' WHERE target_id=? AND status='pending' AND id != ?",
-         (p["target_id"], pid))
+    db.x("UPDATE proposals SET status='superseded' WHERE target_id=? AND target_kind=? AND status='pending' AND id != ?",
+         (p["target_id"], p["target_kind"], pid))
     schedule_scan()  # Gehirn auffrischen
     return chat.proposal_view(get_proposal(pid))
 

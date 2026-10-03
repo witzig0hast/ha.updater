@@ -271,6 +271,19 @@ def analyze(brain: dict) -> tuple[dict, list[dict]]:
         add("info", "syntax", f"{legacy} Automationen nutzen die ältere Syntax (platform:/service:)",
             "Funktioniert weiterhin; neue Schreibweise ist trigger:/action:.")
 
+    # Geräte, deren Entitäten alle verwaist/nicht verfügbar sind -> vermutlich physisch entfernt
+    dev_entities = defaultdict(list)
+    for eid, e in ents.items():
+        if e.get("device_id") and not e["disabled"]:
+            dev_entities[e["device_id"]].append((eid, e))
+    for dev_id, elist in dev_entities.items():
+        if elist and all(e["state"] in (None, "unavailable") for _, e in elist):
+            dname = devices.get(dev_id, {}).get("name") or dev_id
+            eids = ", ".join(eid for eid, _ in elist)
+            add("medium", "verwaistes_geraet", f"Gerät „{dname}“ scheint nicht mehr vorhanden",
+                f"Alle Entitäten sind weg oder nicht verfügbar: {eids}. Einzeln entfernen – dann oben in den "
+                "Vorschlägen prüfen, siehe „Entfernen“.")
+
     order = {"high": 0, "medium": 1, "low": 2, "info": 3}
     findings.sort(key=lambda f: order[f["severity"]])
     return refs, findings

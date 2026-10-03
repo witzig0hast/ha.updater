@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS proposals (
   id INTEGER PRIMARY KEY AUTOINCREMENT, conv_id INTEGER, target_id TEXT, title TEXT,
   explanation TEXT, old_config TEXT, new_config TEXT, warnings TEXT,
   status TEXT DEFAULT 'pending', error TEXT, backup TEXT, source TEXT DEFAULT 'chat', cfg_hash TEXT, action TEXT DEFAULT 'update',
-  analysis_old TEXT, analysis_new TEXT,
+  analysis_old TEXT, analysis_new TEXT, target_kind TEXT DEFAULT 'automation',
   created TEXT DEFAULT CURRENT_TIMESTAMP, applied TEXT);
 """
 
@@ -44,7 +44,8 @@ def conn() -> sqlite3.Connection:
             _conn.executescript(SCHEMA)
             cols = {r["name"] for r in _conn.execute("PRAGMA table_info(proposals)")}
             for col, ddl in (("source", "TEXT DEFAULT 'chat'"), ("cfg_hash", "TEXT"), ("action", "TEXT DEFAULT 'update'"),
-                            ("analysis_old", "TEXT"), ("analysis_new", "TEXT")):
+                            ("analysis_old", "TEXT"), ("analysis_new", "TEXT"),
+                            ("target_kind", "TEXT DEFAULT 'automation'")):
                 if col not in cols:  # bestehende Datenbanken mitziehen
                     _conn.execute(f"ALTER TABLE proposals ADD COLUMN {col} {ddl}")
             _conn.commit()
@@ -87,6 +88,8 @@ DEFAULTS = {
     "keep_alive": "2m",     # Modell nach 2 Min. Leerlauf aus dem VRAM werfen
     "read_only": True,      # True = es wird NIE etwas an Home Assistant geschrieben
     "backup_on_scan": True,
+    "max_suggestions": int(os.environ.get("MAX_SUGGESTIONS", "12")),  # KI-Reparaturen pro Lauf (pro Automation ein Modell-Aufruf)
+    "stale_days": 14,        # ab wann eine „unavailable“ Entität als verwaist zum Löschen vorgeschlagen wird
 }
 
 
