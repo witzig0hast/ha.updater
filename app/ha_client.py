@@ -46,6 +46,15 @@ class HA:
             raise HAError(f"POST {path}: HTTP {r.status_code} {r.text[:300]}")
         return r.json() if r.content else None
 
+    async def delete(self, path: str):
+        try:
+            r = await self.client.delete(path)
+        except httpx.HTTPError as e:
+            raise HAError(f"Verbindung zu Home Assistant fehlgeschlagen: {e}") from e
+        if r.status_code >= 400:
+            raise HAError(f"DELETE {path}: HTTP {r.status_code} {r.text[:300]}")
+        return r.json() if r.content else None
+
     async def ws_commands(self, types: list[str]) -> dict:
         """Führt mehrere WebSocket-Listenabfragen in einer Sitzung aus."""
         ws_url = self.url.replace("http", "ws", 1) + "/api/websocket"

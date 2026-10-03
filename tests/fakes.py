@@ -67,6 +67,12 @@ def make_ha():
         CONFIGS.setdefault(kind, {})[cid] = body
         return {"result": "ok"}
 
+    @app.delete("/api/config/{kind}/config/{cid}")
+    def del_cfg(kind: str, cid: str):
+        POSTS.append((kind, cid, "DELETE"))
+        CONFIGS.get(kind, {}).pop(cid, None)
+        return {"result": "ok"}
+
     @app.websocket("/api/websocket")
     async def ws(sock: WebSocket):
         await sock.accept()

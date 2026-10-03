@@ -87,7 +87,26 @@ async def ollama_models():
 
 
 # ---------- Scan / Gehirn ----------
+_scan_lock = asyncio.Lock()
+
+
+_scan_tasks = 0
+
+
+def schedule_scan() -> None:
+    """Hintergrund-Scan einreihen; der Status wird sofort gesetzt (die Sperre serialisiert die Läufe)."""
+    global _scan_tasks
+    _scan_tasks += 1
+    jobs["scan"].update(running=True, error=None, msg="Starte …")
+    asyncio.create_task(run_scan())
+
+
 async def do_scan(progress):
+    async with _scan_lock:  # nie zwei Scans gleichzeitig (der ältere würde den neueren überschreiben)
+        return await _do_scan(progress)
+
+
+async def _do_scan(progress):
     s = db.get_settings()
     ha = from_settings(s)
     try:
@@ -113,7 +132,9 @@ async def run_scan():
         job["error"] = str(e)
         job["msg"] = "Fehlgeschlagen"
     finally:
-        job["running"] = False
+        global _scan_tasks
+        _scan_tasks -= 1
+        job["running"] = _scan_tasks > 0
 
 
 MAX_SUGGESTIONS = int(os.environ.get("MAX_SUGGESTIONS", "12"))
@@ -126,6 +147,7 @@ async def run_all():
     try:
         brain = await do_scan(lambda m: job.update(msg=m))
         suggest.retire_stale(brain)
+        suggest.propose_dead_deletions(brain)
         todo = suggest.candidates(brain, MAX_SUGGESTIONS)
         job["total"] = len(todo)
         s = db.get_settings()
@@ -147,7 +169,7 @@ async def run_all():
 async def start_scan():
     if jobs["scan"]["running"]:
         raise HTTPException(409, "Scan läuft bereits.")
-    asyncio.create_task(run_scan())
+    schedule_scan()
     return jobs["scan"]
 
 
@@ -155,6 +177,7 @@ async def start_scan():
 async def start_run():
     if jobs["run"]["running"] or jobs["scan"]["running"]:
         raise HTTPException(409, "Läuft bereits.")
+    jobs["run"].update(running=True, error=None, ai_error=None, msg="Starte …", done=0, total=0)
     asyncio.create_task(run_all())
     return jobs["run"]
 
@@ -365,13 +388,16 @@ async def approve(pid: int, body: dict | None = None):
         raise HTTPException(403, "Schreibsperre aktiv. Es wird nichts an Home Assistant geändert.")
     if p["status"] != "pending":
         raise HTTPException(409, f"Vorschlag hat Status „{p['status']}“.")
-    cfg = json.loads(p["new_config"])
     ha = from_settings(s)
     try:
         bname = await backup.create_live(ha, f"vor-vorschlag-{pid}")
-        target = p["target_id"] if p["target_id"] != "new" else str(int(time.time() * 1000))
-        cfg["id"] = target
-        await ha.post(f"/api/config/automation/config/{target}", cfg)
+        if p["action"] == "delete":
+            await ha.delete(f"/api/config/automation/config/{p['target_id']}")
+        else:
+            cfg = json.loads(p["new_config"])
+            target = p["target_id"] if p["target_id"] != "new" else str(int(time.time() * 1000))
+            cfg["id"] = target
+            await ha.post(f"/api/config/automation/config/{target}", cfg)
         db.x("UPDATE proposals SET status='applied', backup=?, applied=datetime('now'), error=NULL WHERE id=?",
              (bname, pid))
     except HAError as e:
@@ -381,7 +407,7 @@ async def approve(pid: int, body: dict | None = None):
         await ha.close()
     db.x("UPDATE proposals SET status='superseded' WHERE target_id=? AND status='pending' AND id != ?",
          (p["target_id"], pid))
-    asyncio.create_task(run_scan())  # Gehirn auffrischen
+    schedule_scan()  # Gehirn auffrischen
     return chat.proposal_view(get_proposal(pid))
 
 
@@ -427,7 +453,7 @@ async def backup_restore(name: str, kind: str, item_id: str):
         await ha.post(f"/api/config/{kind}/config/{item_id}", cfg)
     finally:
         await ha.close()
-    asyncio.create_task(run_scan())
+    schedule_scan()
     return {"ok": True}
 
 

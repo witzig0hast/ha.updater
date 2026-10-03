@@ -123,3 +123,50 @@ def test_run_creates_automatic_suggestions(client):
             break
         time.sleep(0.1)
     assert pid not in [p["id"] for p in client.get("/api/home").json()["proposals"]]
+
+
+def test_delete_request_overrides_stubborn_model(client):
+    """Das Modell würde immer wieder 'repariere die Geräte' liefern – ein Löschwunsch muss trotzdem durchkommen."""
+    from tests import fakes
+    r1 = client.post("/api/chat", json={"message": "Das Flurlicht geht aus obwohl ich noch da bin"}).json()
+    p1 = r1["proposal"]
+    assert p1["action"] == "update"
+    n_calls = len(fakes.OLLAMA_CALLS)
+    r2 = client.post("/api/chat", json={"message": "Lösch die Automation einfach ganz", "conv_id": r1["conv_id"],
+                                        "revise_proposal": p1["id"]}).json()
+    p2 = r2["proposal"]
+    assert p2["action"] == "delete" and p2["target_id"] == p1["target_id"]
+    body = [l for l in p2["diff"].split("\n") if not l.startswith(("---", "+++", "@@"))]
+    assert body and all(l.startswith("-") for l in body)            # alles wird entfernt, nichts hinzugefügt
+    assert len(fakes.OLLAMA_CALLS) == n_calls                       # kein LLM-Aufruf nötig
+    st = {p["id"]: p["status"] for p in client.get("/api/proposals").json()}
+    assert st[p1["id"]] == "superseded" and st[p2["id"]] == "pending"
+    a = client.post(f"/api/proposals/{p2['id']}/approve", json={"confirm_write": True}).json()
+    assert a["status"] == "applied" and a["backup"]
+    assert fakes.POSTS[-1] == ("automation", p1["target_id"], "DELETE")
+    old = client.get(f"/api/backups/{a['backup']}").json()["automation"]
+    assert p1["target_id"] in old                                   # Backup enthält die gelöschte Automation
+
+
+def test_delete_ambiguous_asks_back(client):
+    r = client.post("/api/chat", json={"message": "lösche die Flur Automation"}).json()
+    assert r["proposal"] is None or r["proposal"]["action"] == "delete"
+    assert r["reply"]
+
+
+def test_dead_automation_gets_delete_suggestion(client):
+    from tests import fakes
+    fakes.STATES.append({"entity_id": "automation.alt", "state": "on",
+                         "attributes": {"id": "a9", "friendly_name": "Alte Automation"}})
+    fakes.CONFIGS["automation"]["a9"] = {"id": "a9", "alias": "Alte Automation",
+        "triggers": [{"trigger": "state", "entity_id": "light.gibtsnicht"}],
+        "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.auch_nicht"}}]}
+    wait(client, "/api/scan/status", "running")                     # Hintergrund-Scan aus dem Vortest abwarten
+    assert client.post("/api/run").status_code == 200
+    for _ in range(100):
+        h = client.get("/api/home").json()
+        if not h["run"]["running"]:
+            break
+        time.sleep(0.1)
+    dele = [p for p in h["proposals"] if p["action"] == "delete" and p["target_id"] == "a9"]
+    assert dele and dele[0]["source"] == "auto" and "nicht mehr" in dele[0]["explanation"]

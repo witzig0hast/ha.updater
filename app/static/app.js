@@ -52,12 +52,12 @@ async function load() {
 
 function suggestion(p) {
   return `<article class="card sug" data-id="${p.id}">
-    <h3>${esc(p.title)}<span class="tag">${p.is_new ? 'neu' : 'Änderung'}</span></h3>
+    <h3>${esc(p.title)}<span class="tag${p.action === 'delete' ? ' del' : ''}">${p.action === 'delete' ? 'löschen' : p.is_new ? 'neu' : 'Änderung'}</span></h3>
     <p>${esc(p.explanation)}</p>
     ${p.warnings.map(w => `<div class="note">${esc(w)}</div>`).join('')}
-    <details><summary>Genaue Änderung ansehen</summary><pre class="diff">${diffHtml(p.diff || p.new_yaml)}</pre></details>
+    <details><summary>${p.action === 'delete' ? 'Gelöschte Automation ansehen' : 'Genaue Änderung ansehen'}</summary><pre class="diff">${diffHtml(p.diff || p.new_yaml)}</pre></details>
     <div class="row">
-      <button data-a="ok">Übernehmen</button>
+      <button data-a="ok"${p.action === 'delete' ? ' class="danger"' : ''}>${p.action === 'delete' ? 'Löschen' : 'Übernehmen'}</button>
       <button class="sec" data-a="adj">Anpassen</button>
       <button class="quiet" data-a="no">Verwerfen</button>
     </div>
@@ -119,12 +119,13 @@ $('#app').addEventListener('click', async e => {
   if (a === 'adj') { const f = $('.adj', card); f.hidden = !f.hidden; if (!f.hidden) $('input', f).focus(); return; }
   if (a === 'no') { await api(`/proposals/${id}/reject`, {}); card.classList.add('gone'); setTimeout(load, 300); return; }
   if (a === 'ok') {
-    const ro = H.read_only;
-    const yes = await confirmBox('Änderung übernehmen?',
-      'Vorher wird automatisch ein Backup deiner Automationen angelegt.' + (ro ? '<br><br>Der Schreibschutz ist aktiv. Mit „Übernehmen“ erlaubst du diese eine Änderung.' : ''), 'Übernehmen');
+    const ro = H.read_only, del = b.textContent.trim() === 'Löschen';
+    const lbl = del ? 'Löschen' : 'Übernehmen';
+    const yes = await confirmBox(del ? 'Automation löschen?' : 'Änderung übernehmen?',
+      'Vorher wird automatisch ein Backup deiner Automationen angelegt.' + (ro ? `<br><br>Der Schreibschutz ist aktiv. Mit „${lbl}“ erlaubst du diese eine Änderung.` : ''), lbl);
     if (!yes) return;
     b.disabled = true;
-    try { const p = await api(`/proposals/${id}/approve`, {confirm_write: true}); toast('Übernommen. Backup: ' + p.backup); card.classList.add('gone'); setTimeout(load, 300); }
+    try { const p = await api(`/proposals/${id}/approve`, {confirm_write: true}); toast((p.action === 'delete' ? 'Gelöscht. Backup: ' : 'Übernommen. Backup: ') + p.backup); card.classList.add('gone'); setTimeout(load, 300); }
     catch (x) { toast(x.message); b.disabled = false; }
   }
 });

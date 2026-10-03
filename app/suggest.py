@@ -50,6 +50,9 @@ def candidates(brain: dict, limit: int) -> list[tuple[dict, list[dict]]]:
         it = store.find_item(brain, "automation", iid)
         if not it or not it["editable"] or not it["config"]:
             continue
+        r = brain["refs"].get(item_key("automation", iid), {})
+        if not (r.get("trigger") or r.get("condition") or r.get("action")):
+            continue  # komplett tot -> Löschvorschlag statt Reparaturversuch
         h = cfg_hash(it["config"])
         seen = db.q1("SELECT id FROM proposals WHERE source='auto' AND target_id=? AND cfg_hash=? "
                      "AND status IN ('pending','rejected')", (iid, h))
@@ -58,6 +61,28 @@ def candidates(brain: dict, limit: int) -> list[tuple[dict, list[dict]]]:
         out.append((min(ORDER[f["severity"]] for f in fs), -len(fs), it, fs))
     out.sort(key=lambda x: (x[0], x[1]))
     return [(it, fs) for _, _, it, fs in out[:limit]]
+
+
+def propose_dead_deletions(brain: dict) -> int:
+    """Regelbasiert (ohne KI): Automationen, deren sämtliche Entitäten nicht mehr existieren, sind tot -> Löschvorschlag."""
+    n = 0
+    for it in brain["items"]:
+        if it["kind"] != "automation" or not it["editable"] or not it["config"]:
+            continue
+        r = brain["refs"].get(item_key("automation", it["id"]), {})
+        alive = r.get("trigger", []) + r.get("condition", []) + r.get("action", [])
+        if alive or not (r.get("missing") or r.get("missing_devices")):
+            continue
+        h = cfg_hash(it["config"])
+        if db.q1("SELECT id FROM proposals WHERE source='auto' AND target_id=? AND cfg_hash=? "
+                 "AND status IN ('pending','rejected','applied')", (it["id"], h)):
+            continue
+        gone = ", ".join((r.get("missing") or []) + (r.get("missing_devices") or []))[:200]
+        chat.create_delete(brain, it, None, "auto",
+                           f"Alle beteiligten Geräte/Entitäten existieren nicht mehr ({gone}). "
+                           "Die Automation kann nie etwas auslösen.")
+        n += 1
+    return n
 
 
 def retire_stale(brain: dict) -> None:

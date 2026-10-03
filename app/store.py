@@ -82,6 +82,7 @@ def relevant_context(brain: dict, message: str, max_items: int = 3, max_entities
             scored.append((score, it))
     scored.sort(key=lambda s: -s[0])
     items = [it for _, it in scored[:max_items]]
+    scores = [sc for sc, _ in scored[:max_items]]
 
     ent_scored = []
     for eid, e in brain["entities"].items():
@@ -92,7 +93,7 @@ def relevant_context(brain: dict, message: str, max_items: int = 3, max_entities
             ent_scored.append((s, eid))
     ent_scored.sort(key=lambda s: -s[0])
     ents = [describe_entity(brain, eid) for _, eid in ent_scored[:max_entities]]
-    return {"items": items, "entities": ents}
+    return {"items": items, "scores": scores, "entities": ents}
 
 
 def brain_summary_text(brain: dict) -> str:

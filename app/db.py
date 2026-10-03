@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS proposals (
   id INTEGER PRIMARY KEY AUTOINCREMENT, conv_id INTEGER, target_id TEXT, title TEXT,
   explanation TEXT, old_config TEXT, new_config TEXT, warnings TEXT,
-  status TEXT DEFAULT 'pending', error TEXT, backup TEXT, source TEXT DEFAULT 'chat', cfg_hash TEXT,
+  status TEXT DEFAULT 'pending', error TEXT, backup TEXT, source TEXT DEFAULT 'chat', cfg_hash TEXT, action TEXT DEFAULT 'update',
   created TEXT DEFAULT CURRENT_TIMESTAMP, applied TEXT);
 """
 
@@ -41,6 +41,11 @@ def conn() -> sqlite3.Connection:
             _conn = sqlite3.connect(DATA_DIR / "hafix.db", check_same_thread=False)
             _conn.row_factory = sqlite3.Row
             _conn.executescript(SCHEMA)
+            cols = {r["name"] for r in _conn.execute("PRAGMA table_info(proposals)")}
+            for col, ddl in (("source", "TEXT DEFAULT 'chat'"), ("cfg_hash", "TEXT"), ("action", "TEXT DEFAULT 'update'")):
+                if col not in cols:  # bestehende Datenbanken mitziehen
+                    _conn.execute(f"ALTER TABLE proposals ADD COLUMN {col} {ddl}")
+            _conn.commit()
         return _conn
 
 

@@ -80,3 +80,4 @@ dialog .row.end{justify-content:flex-end;margin-top:20px}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 
 .adj[hidden],#ask[hidden]{display:none}
+button.danger{background:var(--bad);color:#fff}.tag.del{background:color-mix(in srgb,var(--bad) 16%,transparent);color:var(--bad)}
