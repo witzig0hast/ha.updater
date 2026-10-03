@@ -14,6 +14,9 @@ unnötigen Templates). Regeln:
 - Verwende NUR Entity-IDs aus dem Kontext. Erfinde keine.
 - Ändere nur, was für die Behebung nötig ist. Gib die KOMPLETTE neue Konfiguration zurück (alias, description, \
 triggers, conditions, actions, mode).
+- WICHTIG: Behalte ALLE bisherigen Aktionen/Wirkungen der Automation bei, die nicht Teil des gemeldeten Problems \
+sind. Das Beheben eines einzelnen Problems darf keine anderen, unbeteiligten Aktionen entfernen oder ihre Ziel-\
+Entitäten ändern.
 - Wenn sich das Problem nicht sicher automatisch lösen lässt, setze config auf null.
 Antworte NUR mit JSON:
 {"title": "kurzer Titel, max. 8 Wörter", "explanation": "1-2 Sätze für Laien: was wird geändert und warum", \
@@ -108,9 +111,11 @@ async def suggest_for(settings: dict, brain: dict, item: dict, findings: list[di
     if not data or not isinstance(data.get("config"), dict):
         return None
     cfg = data["config"]
-    ok, warns = chat.validate_config(brain, cfg)
+    ok, warns = chat.validate_config(brain, cfg, item["config"])
     if not ok or cfg == item["config"]:
         return None
     return chat.create_proposal(None, item["id"], str(data.get("title") or item["alias"])[:80],
                                 str(data.get("explanation") or ""), item["config"], cfg, warns,
-                                "auto", cfg_hash(item["config"]))
+                                "auto", cfg_hash(item["config"]), "update",
+                                store.describe_automation(brain, item["config"]),
+                                store.describe_automation(brain, cfg))

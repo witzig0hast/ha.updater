@@ -51,6 +51,10 @@ label{display:block;margin:14px 0 5px;color:var(--mute);font-size:13px}
 .sug p{margin:0 0 10px;color:var(--mute)}
 .tag{font-size:12px;padding:1px 8px;border-radius:6px;background:var(--raised);color:var(--mute);margin-left:8px;font-weight:400;vertical-align:1px}
 .sug summary{cursor:pointer;color:var(--mute);margin-bottom:8px;font-size:13px}.sug summary:hover{color:var(--fg)}
+.sug .analysis{border:1px solid var(--line);border-radius:10px;padding:2px 12px;margin:10px 0;background:var(--bg)}
+.sug .analysis>summary{margin:8px 0}
+.sug .analysis details{margin:0 0 10px 4px}
+.sug .analysis details pre{white-space:pre-wrap;font-size:12.5px}
 .sug .adj{display:flex;gap:8px;margin-top:10px}
 pre{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;overflow:auto;font:12.5px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace;margin:8px 0;white-space:pre}
 .diff span{display:block}.diff .a{color:var(--ok);background:color-mix(in srgb,var(--ok) 11%,transparent)}

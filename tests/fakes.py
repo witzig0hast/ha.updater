@@ -35,6 +35,7 @@ CONFIGS = {
     }
 }
 POSTS = []
+WIPE_ACTIONS = False  # Testschalter: simuliert ein Modell, das die eigentliche Wirkung "repariert" weg
 
 
 def make_ha():
@@ -111,10 +112,16 @@ def make_ollama():
         OLLAMA_CALLS.append(body)
         sys_prompt = body["messages"][0]["content"]
         if "Erkannte Probleme" in body["messages"][-1]["content"]:
-            out = {"title": "Problem beheben", "explanation": "Test-Erklärung.",
-                   "config": {"alias": "Repariert", "mode": "restart",
-                              "triggers": [{"trigger": "state", "entity_id": "binary_sensor.flur_bewegung", "to": "on"}],
-                              "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.flur"}}]}}
+            if WIPE_ACTIONS:
+                out = {"title": "Problem beheben", "explanation": "Test-Erklärung.",
+                       "config": {"alias": "Repariert", "mode": "restart",
+                                  "triggers": [{"trigger": "state", "entity_id": "binary_sensor.flur_bewegung", "to": "on"}],
+                                  "actions": [{"delay": "00:00:01"}]}}  # löscht die eigentliche Wirkung (Testfall)
+            else:
+                out = {"title": "Problem beheben", "explanation": "Test-Erklärung.",
+                       "config": {"alias": "Repariert", "mode": "restart",
+                                  "triggers": [{"trigger": "state", "entity_id": "binary_sensor.flur_bewegung", "to": "on"}],
+                                  "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.flur"}}]}}
         elif "bewertest eine Automation" in sys_prompt:
             out = {"verdict": "verbesserbar", "summary": "Test", "issues": ["x"], "suggestion": "y"}
         else:

@@ -14,6 +14,9 @@ Regeln:
 - Ziel: Logik korrekt, sinnvoll und mit möglichst wenig Rechenleistung (State-Trigger statt Polling, keine unnötigen Templates).
 - Wenn die Angaben nicht reichen, stelle eine kurze Rückfrage und setze proposal auf null.
 - Bei Änderung einer bestehenden Automation: gib die KOMPLETTE neue Konfiguration zurück (alias, description, triggers, conditions, actions, mode).
+- WICHTIG: Behalte alle bisherigen Aktionen/Wirkungen der Automation bei, außer der Nutzer bittet ausdrücklich darum, \
+genau diese Aktion zu entfernen. Das Beheben EINES Problems (z. B. eine falsche Entität) darf NICHT dazu führen, \
+dass andere, unbeteiligte Aktionen verschwinden. Wenn du unsicher bist, ob eine Aktion noch gebraucht wird, behalte sie.
 - Will der Nutzer eine Automation LÖSCHEN/entfernen, nimm action "delete" (ohne config).
 - Die AKTUELLE ANWEISUNG des Nutzers hat immer Vorrang vor früheren Vorschlägen. Ein früherer Vorschlag ist nur \
 Ausgangspunkt und darf komplett verworfen werden.
@@ -31,7 +34,7 @@ def wants_delete(message: str) -> bool:
     return bool(DELETE_RE.search(message))
 
 
-def validate_config(brain: dict, cfg) -> tuple[bool, list[str]]:
+def validate_config(brain: dict, cfg, old=None) -> tuple[bool, list[str]]:
     warns = []
     if not isinstance(cfg, dict):
         return False, ["Konfiguration ist kein Objekt."]
@@ -50,6 +53,10 @@ def validate_config(brain: dict, cfg) -> tuple[bool, list[str]]:
         warns.append("Unbekannte Entitäten: " + ", ".join(r["missing"]))
     if r["missing_devices"]:
         warns.append("Unbekannte Geräte: " + ", ".join(r["missing_devices"]))
+    gone = store.missing_effects(brain, old, cfg)
+    if gone:
+        warns.append("Achtung, diese bisher gesteuerten Geräte kommen im Vorschlag nicht mehr vor: " +
+                     ", ".join(gone) + ". Prüfe, ob das wirklich gewollt ist.")
     return True, warns
 
 
@@ -60,25 +67,28 @@ def diff_text(old, new) -> str:
 
 
 def create_proposal(conv_id, target, title, explanation, old, new, warns, source="chat", cfg_hash=None,
-                    action="update") -> int:
+                    action="update", analysis_old=None, analysis_new=None) -> int:
     return db.x(
         "INSERT INTO proposals(conv_id, target_id, title, explanation, old_config, new_config, warnings, source, "
-        "cfg_hash, action) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        "cfg_hash, action, analysis_old, analysis_new) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         (conv_id, target, title, explanation, json.dumps(old) if old else None,
-         json.dumps(new) if new is not None else None, json.dumps(warns), source, cfg_hash, action))
+         json.dumps(new) if new is not None else None, json.dumps(warns), source, cfg_hash, action,
+         analysis_old, analysis_new))
 
 
 def create_delete(brain: dict, item: dict, conv_id=None, source="chat", reason="") -> int:
     return create_proposal(conv_id, item["id"], f"„{item['alias']}“ löschen",
                            reason or "Diese Automation wird komplett aus Home Assistant entfernt.",
-                           item["config"], None, [], source, cfg_hash(item["config"]), "delete")
+                           item["config"], None, [], source, cfg_hash(item["config"]), "delete",
+                           store.describe_automation(brain, item["config"]),
+                           "Automation wird vollständig entfernt – keine Aktionen mehr.")
 
 
 def proposal_view(p: dict) -> dict:
     old = json.loads(p["old_config"]) if p["old_config"] else None
     new = json.loads(p["new_config"]) if p["new_config"] else None
     return {**{k: p[k] for k in ("id", "conv_id", "target_id", "title", "explanation", "status", "error",
-                                 "backup", "created", "applied", "source", "action")},
+                                 "backup", "created", "applied", "source", "action", "analysis_old", "analysis_new")},
             "warnings": json.loads(p["warnings"] or "[]"), "is_new": old is None and new is not None,
             "old_yaml": store.to_yaml(old) if old else "", "new_yaml": store.to_yaml(new) if new else "",
             "diff": diff_text(old, new)}
@@ -150,16 +160,17 @@ async def handle_message(settings: dict, conv_id: int | None, message: str,
                 reply += "\n\n(Welche Automation gelöscht werden soll, war nicht eindeutig – bitte nenne den Namen.)"
         elif isinstance(prop, dict):
             cfg = prop.get("config")
-            ok, warns = validate_config(brain, cfg)
+            target = str(prop.get("target_id") or "new")
+            existing = store.find_item(brain, "automation", target)
+            old = existing["config"] if existing and existing["config"] else None
+            ok, warns = validate_config(brain, cfg, old)
             if ok:
-                target = str(prop.get("target_id") or "new")
-                existing = store.find_item(brain, "automation", target)
-                old = existing["config"] if existing and existing["config"] else None
                 if old is None:
                     target = "new"
                 proposal_id = create_proposal(
                     conv_id, target, str(prop.get("title") or cfg["alias"]), str(prop.get("explanation") or ""),
-                    old, cfg, warns, "chat", cfg_hash(old) if old else None)
+                    old, cfg, warns, "chat", cfg_hash(old) if old else None, "update",
+                    store.describe_automation(brain, old), store.describe_automation(brain, cfg))
                 if revise_proposal:
                     db.x("UPDATE proposals SET status='superseded' WHERE id=? AND status='pending'", (revise_proposal,))
             else:

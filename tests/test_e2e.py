@@ -68,7 +68,13 @@ def test_chat_proposal_readonly_gate_and_apply(client):
     p = r["proposal"]
     assert p and p["target_id"] == "a2" and p["status"] == "pending"
     assert any("light.flurr" in w for w in p["warnings"])        # Halluzinierte Entität wird markiert
+    # Das Modell hat light.flur (alte Wirkung) stillschweigend durch light.flurr ersetzt -> muss auffallen
+    assert any("bisher gesteuerten Geräte" in w and "light.flur" in w for w in p["warnings"])
     assert "-    - platform: state" in p["diff"] or "+" in p["diff"]
+    # Deterministische Vorher/Nachher-Analyse (kein LLM, aus der Konfiguration berechnet)
+    assert "light.flur" in p["analysis_old"] and "Flurlicht" in p["analysis_old"]
+    assert "Auslöser" in p["analysis_old"] and "Aktionen" in p["analysis_old"]
+    assert "light.flurr" in p["analysis_new"]
     # Schreibsperre standardmäßig aktiv
     assert client.post(f"/api/proposals/{p['id']}/approve").status_code == 403
     assert fakes.POSTS == []
@@ -152,6 +158,36 @@ def test_delete_ambiguous_asks_back(client):
     r = client.post("/api/chat", json={"message": "lösche die Flur Automation"}).json()
     assert r["proposal"] is None or r["proposal"]["action"] == "delete"
     assert r["reply"]
+
+
+def test_auto_suggestion_warns_when_action_gets_wiped(client):
+    """Repariert die KI ein Problem, verliert dabei aber die eigentliche Wirkung -> muss als Warnung auffallen."""
+    from tests import fakes
+    wait(client, "/api/scan/status", "running")
+    # Eigene, bisher unbenutzte Automation -> keine Kollision mit Vorschlägen aus früheren Tests
+    fakes.STATES.append({"entity_id": "automation.wipe_test", "state": "on",
+                         "attributes": {"id": "a8", "friendly_name": "Wipe-Test"}})
+    fakes.CONFIGS["automation"]["a8"] = {"id": "a8", "alias": "Wipe-Test",
+        "triggers": [{"trigger": "state", "entity_id": "binary_sensor.flur_bewegung", "to": "on"}],
+        "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.gibtsnicht_auch"}}]}
+    fakes.WIPE_ACTIONS = True
+    try:
+        assert client.post("/api/run").status_code == 200
+        for _ in range(100):
+            h = client.get("/api/home").json()
+            if not h["run"]["running"]:
+                break
+            time.sleep(0.1)
+        assert h["run"]["error"] is None, h["run"]
+        auto = [p for p in h["proposals"] if p["source"] == "auto" and p["action"] == "update"]
+        assert auto, h
+        warned = [p for p in auto if any("bisher gesteuerten Geräte" in w for w in p["warnings"])]
+        assert warned, [p["warnings"] for p in auto]
+        p = warned[0]
+        assert "light.gibtsnicht_auch" in p["analysis_old"] and "Aktionen" in p["analysis_old"]
+        assert "tut nichts" in p["analysis_new"] or "kein erkennbarer" in p["analysis_new"]
+    finally:
+        fakes.WIPE_ACTIONS = False
 
 
 def test_dead_automation_gets_delete_suggestion(client):

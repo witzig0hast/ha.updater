@@ -51,10 +51,16 @@ async function load() {
 }
 
 function suggestion(p) {
+  const hasOld = p.analysis_old && p.action !== 'new';
+  const analysis = (p.analysis_old || p.analysis_new) ? `<details class="analysis"><summary>Analyse</summary>
+    ${hasOld ? `<details><summary>Voranalyse der bestehenden Automation</summary><pre>${esc(p.analysis_old)}</pre></details>` : ''}
+    <details><summary>${p.action === 'delete' ? 'Was danach fehlt' : 'Analyse des Vorschlags'}</summary><pre>${esc(p.analysis_new)}</pre></details>
+  </details>` : '';
   return `<article class="card sug" data-id="${p.id}">
     <h3>${esc(p.title)}<span class="tag${p.action === 'delete' ? ' del' : ''}">${p.action === 'delete' ? 'löschen' : p.is_new ? 'neu' : 'Änderung'}</span></h3>
     <p>${esc(p.explanation)}</p>
     ${p.warnings.map(w => `<div class="note">${esc(w)}</div>`).join('')}
+    ${analysis}
     <details><summary>${p.action === 'delete' ? 'Gelöschte Automation ansehen' : 'Genaue Änderung ansehen'}</summary><pre class="diff">${diffHtml(p.diff || p.new_yaml)}</pre></details>
     <div class="row">
       <button data-a="ok"${p.action === 'delete' ? ' class="danger"' : ''}>${p.action === 'delete' ? 'Löschen' : 'Übernehmen'}</button>

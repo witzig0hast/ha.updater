@@ -5,7 +5,7 @@ import re
 import yaml
 
 from . import db
-from .analyzer import cfg_hash, item_key
+from .analyzer import actions_of, cfg_hash, item_key, service_calls, trig_type, triggers_of
 
 _cache: dict | None = None
 
@@ -44,6 +44,99 @@ def describe_entity(brain: dict, eid: str) -> dict:
         return {"entity_id": eid, "name": None, "state": None, "area": None, "exists": False}
     return {"entity_id": eid, "name": e["name"], "state": e["state"],
             "area": brain["areas"].get(e["area_id"]) if e.get("area_id") else None, "exists": True}
+
+
+def _entity_label(brain: dict, eid) -> str:
+    if not isinstance(eid, str):
+        return str(eid)
+    name = brain["entities"].get(eid, {}).get("name")
+    return f"{name} ({eid})" if name and name != eid else eid
+
+
+def _trigger_text(brain: dict, t: dict) -> str:
+    tt = trig_type(t) or "?"
+    eid = t.get("entity_id")
+    eid = eid[0] if isinstance(eid, list) and eid else eid
+    bits = [_entity_label(brain, eid)] if isinstance(eid, str) else []
+    if "to" in t:
+        bits.append(f"wechselt zu „{t['to']}“")
+    elif tt == "state":
+        bits.append("ändert sich")
+    if "from" in t:
+        bits.append(f"(von „{t['from']}“)")
+    if "for" in t:
+        bits.append(f"für mindestens {t['for']}")
+    if "at" in t:
+        bits.append(f"um {t['at']} Uhr")
+    if tt == "time_pattern":
+        bits.append(f"alle {t.get('seconds') or t.get('minutes') or t.get('hours')} Sekunden/Minuten/Stunden")
+    if tt == "sun":
+        bits.append(str(t.get("event", "")))
+    label = {"state": "Zustandsänderung", "time": "Uhrzeit", "time_pattern": "wiederkehrender Zeitabstand (Polling)",
+             "sun": "Sonnenstand", "numeric_state": "Schwellenwert", "template": "Template-Bedingung",
+             "device": "Geräte-Trigger", "event": "Ereignis", "homeassistant": "HA-Start/Stopp",
+             "webhook": "Webhook", "zone": "Zone"}.get(tt, tt)
+    return f"{label}" + (": " + ", ".join(bits) if bits else "")
+
+
+def _condition_text(brain: dict, c) -> str:
+    if not isinstance(c, dict):
+        return str(c)
+    ct = c.get("condition", "?")
+    eid = c.get("entity_id")
+    eid = eid[0] if isinstance(eid, list) and eid else eid
+    bits = [_entity_label(brain, eid)] if isinstance(eid, str) else []
+    if "state" in c:
+        bits.append(f"muss „{c['state']}“ sein")
+    if "after" in c or "before" in c:
+        bits.append(f"{c.get('after', '')}–{c.get('before', '')}".strip("–"))
+    return f"{ct}" + (": " + ", ".join(bits) if bits else "")
+
+
+def describe_automation(brain: dict, cfg: dict | None) -> str:
+    """Klartext-Zusammenfassung aus der Konfiguration (kein LLM, also nicht erfunden) für Vorher/Nachher-Vergleiche."""
+    if not cfg:
+        return "Automation wird vollständig entfernt."
+    lines = ["Auslöser:"]
+    trigs = triggers_of(cfg)
+    lines += [f"  • {_trigger_text(brain, t)}" for t in trigs] if trigs else ["  • keiner – die Automation läuft nie von selbst"]
+    conds = as_list_conditions(cfg)
+    lines.append("Bedingungen:")
+    lines += [f"  • {_condition_text(brain, c)}" for c in conds] if conds else ["  • keine"]
+    lines.append("Aktionen (was tatsächlich passiert):")
+    calls = service_calls(cfg)
+    if calls:
+        for svc, targets in calls:
+            names = ", ".join(_entity_label(brain, e) for e in sorted(targets)) or "kein konkretes Ziel"
+            lines.append(f"  • {svc} → {names}")
+    elif actions_of(cfg):
+        lines.append("  • vorhanden, aber kein erkennbarer Geräte-Aufruf (z. B. nur Wartezeit/Bedingung)")
+    else:
+        lines.append("  • keine – diese Automation tut nichts")
+    return "\n".join(lines)
+
+
+def as_list_conditions(cfg: dict) -> list:
+    c = cfg.get("conditions", cfg.get("condition"))
+    if c is None:
+        return []
+    return c if isinstance(c, list) else [c]
+
+
+def action_targets(cfg) -> set[str]:
+    """Alle Entitäten, die eine Konfiguration tatsächlich per Service-Aufruf anspricht."""
+    targets: set[str] = set()
+    for _, tg in service_calls(cfg or {}):
+        targets |= tg
+    return targets
+
+
+def missing_effects(brain: dict, old_cfg, new_cfg) -> list[str]:
+    """Entitäten, die vorher angesteuert wurden und im Vorschlag gar nicht mehr vorkommen."""
+    if not old_cfg:
+        return []
+    gone = action_targets(old_cfg) - action_targets(new_cfg)
+    return [f"{_entity_label(brain, e)}" for e in sorted(gone)]
 
 
 def get_review(kind: str, item_id: str) -> dict | None:
