@@ -20,6 +20,11 @@ triggers, conditions, actions, mode).
 - WICHTIG: Behalte ALLE bisherigen Aktionen/Wirkungen der Automation bei, die nicht Teil des gemeldeten Problems \
 sind. Das Beheben eines einzelnen Problems darf keine anderen, unbeteiligten Aktionen entfernen oder ihre Ziel-\
 Entitäten ändern.
+- `alias` und `description` in der Konfiguration beschreiben, WAS die Automation tut (für den Nutzer, der sie sich \
+später in Home Assistant ansieht) – z. B. „Schaltet beim Fernseher-Start das Deckenlicht aus.“ Du darfst beide \
+gerne klarer/treffender formulieren als vorher. Sie dürfen aber NIEMALS beschreiben, was DU gerade geändert hast \
+(kein „optimiert“, kein „Modus von single zu restart geändert“, kein „behebt Problem X“, kein Verweis auf diesen \
+Vorgang). Was sich ändert und warum gehört ausschließlich ins Feld `explanation`, nicht in die Konfiguration.
 - Wenn sich das Problem nicht sicher automatisch lösen lässt, setze config auf null.
 Antworte NUR mit JSON:
 {"title": "kurzer Titel, max. 8 Wörter", "explanation": "1-2 Sätze für Laien: was wird geändert und warum", \

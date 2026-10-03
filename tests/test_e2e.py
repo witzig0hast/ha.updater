@@ -190,6 +190,44 @@ def test_auto_suggestion_warns_when_action_gets_wiped(client):
         fakes.WIPE_ACTIONS = False
 
 
+def test_auto_suggestion_warns_about_changelog_style_description(client):
+    """Die Description/der Alias dürfen den Zweck der Automation beschreiben, nicht das Vorgehen der KI."""
+    from tests import fakes
+    wait(client, "/api/scan/status", "running")
+    fakes.STATES.append({"entity_id": "automation.meta_test", "state": "on",
+                         "attributes": {"id": "a11", "friendly_name": "Meta-Test"}})
+    fakes.CONFIGS["automation"]["a11"] = {"id": "a11", "alias": "Meta-Test",
+        "triggers": [{"trigger": "state", "entity_id": "binary_sensor.flur_bewegung", "to": "on"}],
+        "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.gibtsnicht_meta"}}]}
+    fakes.META_DESC = True
+    try:
+        assert client.post("/api/run").status_code == 200
+        for _ in range(100):
+            h = client.get("/api/home").json()
+            if not h["run"]["running"]:
+                break
+            time.sleep(0.1)
+        assert h["run"]["error"] is None, h["run"]
+        hit = [p for p in h["proposals"] if p["source"] == "auto" and p["target_id"] == "a11"]
+        assert hit, h
+        p = hit[0]
+        assert any("Änderungsprotokoll" in w for w in p["warnings"]), p["warnings"]
+    finally:
+        fakes.META_DESC = False
+
+
+def test_normal_description_has_no_meta_warning(client):
+    """Gegenprobe: eine normale Funktionsbeschreibung löst die Heuristik nicht fälschlich aus."""
+    from app import chat as chat_mod
+    from app import store as store_mod
+    brain = store_mod.get_brain()
+    cfg = {"alias": "Flurlicht", "description": "Schaltet beim Betreten des Flurs das Licht ein.",
+           "triggers": [{"trigger": "state", "entity_id": "binary_sensor.flur_bewegung", "to": "on"}],
+           "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.flur"}}]}
+    ok, warns = chat_mod.validate_config(brain, cfg)
+    assert ok and not any("Änderungsprotokoll" in w for w in warns)
+
+
 def test_stale_entities_get_checked_and_can_be_deleted(client):
     """Regelbasiert, unabhängig vom KI-Limit: verwaiste/lange nicht verfügbare Entitäten (und Geräte) finden."""
     from tests import fakes

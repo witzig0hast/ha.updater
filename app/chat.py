@@ -17,6 +17,11 @@ Regeln:
 - WICHTIG: Behalte alle bisherigen Aktionen/Wirkungen der Automation bei, außer der Nutzer bittet ausdrücklich darum, \
 genau diese Aktion zu entfernen. Das Beheben EINES Problems (z. B. eine falsche Entität) darf NICHT dazu führen, \
 dass andere, unbeteiligte Aktionen verschwinden. Wenn du unsicher bist, ob eine Aktion noch gebraucht wird, behalte sie.
+- `alias` und `description` in der Konfiguration beschreiben, WAS die Automation tut (für den Nutzer, der sie sich \
+später in Home Assistant ansieht) – z. B. „Schaltet beim Fernseher-Start das Deckenlicht aus.“ Du darfst beide \
+gerne klarer/treffender formulieren als vorher. Sie dürfen aber NIEMALS beschreiben, was DU gerade geändert hast \
+(kein „optimiert“, kein „Modus von single zu restart geändert“, kein Verweis auf diesen Vorgang oder die Anfrage \
+des Nutzers). Was sich ändert und warum gehört ausschließlich ins Feld `explanation`, nicht in die Konfiguration.
 - Will der Nutzer eine Automation LÖSCHEN/entfernen, nimm action "delete" (ohne config).
 - Die AKTUELLE ANWEISUNG des Nutzers hat immer Vorrang vor früheren Vorschlägen. Ein früherer Vorschlag ist nur \
 Ausgangspunkt und darf komplett verworfen werden.
@@ -32,6 +37,20 @@ DELETE_RE = re.compile(r"\b(lösch\w*|entfern\w*|wegmachen|rauswerfen|abschaffen
 
 def wants_delete(message: str) -> bool:
     return bool(DELETE_RE.search(message))
+
+
+META_RE = re.compile(
+    r"\b(optimiert?|geändert|angepasst|behoben|korrigiert|verbessert|gefixt|fix(?:ed)?|repariert|"
+    r"modus von .* zu |von ['\"]?single['\"]? zu |wurde (?:auf|zu|in) )\b", re.I)
+
+
+def meta_language_warning(cfg: dict) -> str | None:
+    """Erkennt, wenn `alias`/`description` statt der Funktion das Vorgehen des Modells beschreiben."""
+    text = f"{cfg.get('alias', '')} {cfg.get('description', '')}"
+    if META_RE.search(text):
+        return ("„alias“/„description“ klingen nach einem Änderungsprotokoll statt einer Funktionsbeschreibung "
+                "(z. B. „optimiert“, „geändert von …“). Bitte prüfen und ggf. anpassen.")
+    return None
 
 
 def validate_config(brain: dict, cfg, old=None) -> tuple[bool, list[str]]:
@@ -57,6 +76,9 @@ def validate_config(brain: dict, cfg, old=None) -> tuple[bool, list[str]]:
     if gone:
         warns.append("Achtung, diese bisher gesteuerten Geräte kommen im Vorschlag nicht mehr vor: " +
                      ", ".join(gone) + ". Prüfe, ob das wirklich gewollt ist.")
+    meta = meta_language_warning(cfg)
+    if meta:
+        warns.append(meta)
     return True, warns
 
 

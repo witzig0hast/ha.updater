@@ -36,6 +36,7 @@ CONFIGS = {
 }
 POSTS = []
 WIPE_ACTIONS = False  # Testschalter: simuliert ein Modell, das die eigentliche Wirkung "repariert" weg
+META_DESC = False      # Testschalter: simuliert ein Modell, das die Änderung statt der Funktion beschreibt
 
 ENTITY_REGISTRY = [
     {"entity_id": "light.flur", "id": "f" * 32, "device_id": "dev1", "area_id": "flur", "platform": "hue"},
@@ -128,6 +129,13 @@ def make_ollama():
                        "config": {"alias": "Repariert", "mode": "restart",
                                   "triggers": [{"trigger": "state", "entity_id": "binary_sensor.flur_bewegung", "to": "on"}],
                                   "actions": [{"delay": "00:00:01"}]}}  # löscht die eigentliche Wirkung (Testfall)
+            elif META_DESC:
+                out = {"title": "Problem beheben", "explanation": "Test-Erklärung.",
+                       "config": {"alias": "Filmmodus: Optimierung",
+                                  "description": "Optimiert die Automation. Modus von 'single' zu 'restart' geändert, "
+                                                 "um der Wartezeit zu behandeln.", "mode": "restart",
+                                  "triggers": [{"trigger": "state", "entity_id": "binary_sensor.flur_bewegung", "to": "on"}],
+                                  "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.flur"}}]}}
             else:
                 out = {"title": "Problem beheben", "explanation": "Test-Erklärung.",
                        "config": {"alias": "Repariert", "mode": "restart",
