@@ -1,0 +1,43 @@
+:root{--bg:#0f1218;--panel:#181d27;--panel2:#1f2532;--line:#2b3343;--fg:#e6e9ef;--mute:#8d97aa;--acc:#4da3ff;
+--ok:#3ecf8e;--warn:#f5b84b;--bad:#ff6b6b;--info:#7f8aa3}
+@media (prefers-color-scheme:light){:root{--bg:#f4f6fa;--panel:#fff;--panel2:#eef1f6;--line:#d7dce6;--fg:#1b2130;--mute:#5d6880;--acc:#1f7ae0;--info:#6b7690}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+header{display:flex;align-items:center;gap:20px;padding:0 20px;height:56px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.brand{font-weight:700;font-size:19px;letter-spacing:.3px}
+nav{display:flex;gap:4px;flex:1;overflow-x:auto}
+nav a{color:var(--mute);text-decoration:none;padding:8px 12px;border-radius:8px;white-space:nowrap}
+nav a:hover{background:var(--panel2);color:var(--fg)} nav a.on{background:var(--panel2);color:var(--acc)}
+.lock{font-size:13px;padding:4px 10px;border-radius:99px;border:1px solid var(--line);white-space:nowrap}
+.lock.ro{color:var(--ok)} .lock.rw{color:var(--warn);border-color:var(--warn)}
+main{max-width:1100px;margin:0 auto;padding:20px 16px 60px}
+h2{margin:0 0 14px;font-size:20px} h3{margin:18px 0 8px;font-size:15px;color:var(--mute);text-transform:uppercase;letter-spacing:.5px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+.stat b{display:block;font-size:26px} .stat span{color:var(--mute);font-size:13px}
+button,.btn{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
+button.sec{background:var(--panel2);color:var(--fg);border:1px solid var(--line)}
+button.bad{background:var(--bad)} button.ok{background:var(--ok);color:#06210f}
+button:disabled{opacity:.5;cursor:not-allowed}
+input,select,textarea{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;width:100%}
+label{display:block;margin:12px 0 4px;color:var(--mute);font-size:13px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.pill{display:inline-block;padding:1px 9px;border-radius:99px;font-size:12px;border:1px solid var(--line);color:var(--mute)}
+.sev-high{color:var(--bad);border-color:var(--bad)} .sev-medium{color:var(--warn);border-color:var(--warn)}
+.sev-low{color:var(--acc);border-color:var(--acc)} .sev-info{color:var(--info)}
+.v-ok{color:var(--ok);border-color:var(--ok)} .v-verbesserbar{color:var(--warn);border-color:var(--warn)} .v-problematisch{color:var(--bad);border-color:var(--bad)}
+table{width:100%;border-collapse:collapse} td,th{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--mute);font-weight:500;font-size:13px} tr.click{cursor:pointer} tr.click:hover{background:var(--panel2)}
+pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font-size:13px;margin:8px 0}
+.diff{white-space:pre}.diff .a{color:var(--ok);background:rgba(62,207,142,.1);display:block} .diff .d{color:var(--bad);background:rgba(255,107,106,.1);display:block} .diff .h{color:var(--acc);display:block}
+.mute{color:var(--mute)} .err{color:var(--bad)} .note{background:var(--panel2);border-left:3px solid var(--warn);padding:10px 12px;border-radius:6px;margin:10px 0}
+#chatlog{min-height:300px;max-height:58vh;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:4px}
+.msg{max-width:85%;padding:10px 14px;border-radius:14px;word-wrap:break-word}
+.txt{white-space:pre-wrap}
+.msg.user{align-self:flex-end;background:var(--acc);color:#fff;border-bottom-right-radius:4px}
+.msg.assistant{align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:4px;max-width:100%;width:fit-content}
+.bar{height:8px;background:var(--panel2);border-radius:99px;overflow:hidden} .bar i{display:block;height:100%;background:var(--acc)}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.chip{cursor:pointer;background:var(--panel2);border:1px solid var(--line);padding:5px 10px;border-radius:99px;font-size:13px;color:var(--mute)}
+.chip:hover{color:var(--fg)}
