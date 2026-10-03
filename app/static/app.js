@@ -59,12 +59,12 @@ function proposalCard(p) {
     <pre class="diff">${diffHtml(p.diff || p.new_yaml)}</pre>${p.error ? `<div class="err">${esc(p.error)}</div>` : ''}
     ${p.backup ? `<div class="mute">Backup vor Änderung: ${esc(p.backup)}</div>` : ''}${acts}</div>`;
 }
-const bubble = (role, text, p) => `<div class="msg ${role}"><span class="txt">${esc(text)}</span>${proposalCard(p)}</div>`;
+const bubble = (role, text, p) => `<div class="msg ${role}"><div class="who">${role === 'user' ? 'Du' : 'HA-Fix'}</div><div class="txt">${esc(text)}</div>${proposalCard(p)}</div>`;
 
 async function chat() {
   const b = await api('/brain');
   $('#view').innerHTML = `<h2>Was stört dich gerade?</h2>
-    ${b.scanned ? '' : '<div class="note">Noch kein Scan. Gehe zu <a href="#brain">Gehirn</a> und baue es zuerst auf.</div>'}
+    ${b.scanned ? '' : '<div class="note">Es wurde noch nichts gescannt. Lies zuerst dein System unter <a href="#brain">Gehirn</a> ein.</div>'}
     <div class="chips">${['Das Licht im Flur geht nachts zu spät aus','Eine Automation löst zu oft aus','Welche Automationen sind überflüssig?'].map(t => `<span class="chip" onclick="document.getElementById('msg').value=this.textContent">${t}</span>`).join('')}</div>
     <div class="card"><div id="chatlog"></div>
     <div id="revhint" class="mute"></div>
@@ -83,7 +83,7 @@ async function send() {
   if (!text) return;
   const log = $('#chatlog'); ta.value = '';
   log.insertAdjacentHTML('beforeend', bubble('user', text));
-  log.insertAdjacentHTML('beforeend', '<div class="msg assistant" id="think"><span class="typing"><i></i><i></i><i></i></span><span class="mute"> Das lokale Modell denkt nach</span></div>');
+  log.insertAdjacentHTML('beforeend', '<div class="msg assistant" id="think"><div class="who">HA-Fix</div><div class="mute">Einen Moment, das lokale Modell überlegt<span class="typing"><i></i><i></i><i></i></span></div></div>');
   log.scrollTop = log.scrollHeight; $('#send').disabled = true;
   try {
     const r = await api('/chat', {body: {message: text, conv_id: convId, revise_proposal: reviseId}});
@@ -118,7 +118,7 @@ async function brain() {
     <div class="chips" id="sevchips"><span class="chip" data-s="">Alle</span>${['high','medium','low','info'].map(s => `<span class="chip" data-s="${s}">${SEV[s]} (${sev[s] || 0})</span>`).join('')}</div>
     <div class="card" id="findings"></div>
     <div class="grid"><div class="card"><h3 style="margin-top:0">Entitäten je Domain</h3>${bars(b.domains)}</div>
-    <div class="card"><h3 style="margin-top:0">Entitäten je Bereich</h3>${bars(b.area_entities)}</div></div>` : '<div class="card">Noch nichts gescannt. Trage zuerst in den <a href="#settings">Einstellungen</a> URL und Token ein.</div>'}`;
+    <div class="card"><h3 style="margin-top:0">Entitäten je Bereich</h3>${bars(b.area_entities)}</div></div>` : '<div class="card">Noch nichts gescannt. Trag zuerst in den <a href="#settings">Einstellungen</a> URL und Token ein.</div>'}`;
   $('#scan').onclick = async () => { try { await api('/scan', {method: 'POST'}); } catch (e) { alert(e.message); } tick(); };
   if ($('#rev')) $('#rev').onclick = async () => { try { await api('/review/start', {method: 'POST'}); } catch (e) { alert(e.message); } tick(); };
   document.querySelectorAll('#sevchips .chip').forEach(c => c.onclick = () => loadFindings(c.dataset.s));
