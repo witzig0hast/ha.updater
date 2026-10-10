@@ -53,14 +53,15 @@ async function load() {
 function suggestion(p) {
   const isEntity = p.target_kind === 'entity';
   const isDelete = p.action === 'delete' || isEntity;
-  const hasOld = p.analysis_old && p.action !== 'new';
+  const hasOld = !!p.analysis_old;
   const oldLabel = isEntity ? 'Details zur Entität' : 'Voranalyse der bestehenden Automation';
   const newLabel = isEntity ? 'Was beim Entfernen passiert' : p.action === 'delete' ? 'Was danach fehlt' : 'Analyse des Vorschlags';
   const analysis = (p.analysis_old || p.analysis_new) ? `<details class="analysis"><summary>Analyse</summary>
     ${hasOld ? `<details><summary>${oldLabel}</summary><pre>${esc(p.analysis_old)}</pre></details>` : ''}
     <details><summary>${newLabel}</summary><pre>${esc(p.analysis_new)}</pre></details>
   </details>` : '';
-  const tag = isEntity ? 'Entität' : p.action === 'delete' ? 'löschen' : p.is_new ? 'neu' : 'Änderung';
+  const tag = isEntity ? 'Entität' : p.action === 'delete' ? 'löschen'
+    : p.is_new ? (p.source === 'auto' ? 'neue Idee' : 'neu') : 'Änderung';
   const diff = (!isEntity && (p.diff || p.new_yaml))
     ? `<details><summary>${p.action === 'delete' ? 'Gelöschte Automation ansehen' : 'Genaue Änderung ansehen'}</summary><pre class="diff">${diffHtml(p.diff || p.new_yaml)}</pre></details>` : '';
   const adjust = isEntity ? '' : `<button class="sec" data-a="adj">Anpassen</button>`;

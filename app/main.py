@@ -149,16 +149,29 @@ async def run_all():
         job["msg"] = "Prüfe verwaiste/nicht verfügbare Entitäten …"
         suggest.propose_stale_entities(brain, int(s["stale_days"]))  # regelbasiert, läuft auf ALLE Entitäten
         suggest.propose_dead_deletions(brain)
-        todo = suggest.candidates(brain, int(s["max_suggestions"]))
-        job["total"] = len(todo)
-        for n, (it, fs) in enumerate(todo, 1):
-            job.update(msg=f"KI prüft „{it['alias']}“ ({n}/{len(todo)})", done=n - 1)
+        budget = int(s["max_suggestions"])
+        todo = suggest.candidates(brain, budget)
+        new_todo = suggest.new_candidates(brain, max(0, budget - len(todo)))
+        job["total"] = len(todo) + len(new_todo)
+        done = 0
+        for it, fs in todo:
+            done += 1
+            job.update(msg=f"KI prüft „{it['alias']}“ ({done}/{job['total']})", done=done - 1)
             try:
                 await suggest.suggest_for(s, brain, it, fs)
             except llm.LLMError as e:
                 job["ai_error"] = str(e)
                 break
-        job.update(msg="Fertig", done=len(todo))
+        else:
+            for opp in new_todo:
+                done += 1
+                job.update(msg=f"KI prüft Idee „{opp['title']}“ ({done}/{job['total']})", done=done - 1)
+                try:
+                    await suggest.suggest_new_automation(s, brain, opp)
+                except llm.LLMError as e:
+                    job["ai_error"] = str(e)
+                    break
+        job.update(msg="Fertig", done=done)
     except Exception as e:
         job.update(error=str(e), msg="Fehlgeschlagen")
     finally:

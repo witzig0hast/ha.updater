@@ -1,5 +1,6 @@
 """Fake Home Assistant + Fake Ollama für Tests."""
 import json
+import re
 import threading
 import time
 
@@ -143,6 +144,16 @@ def make_ollama():
                                   "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.flur"}}]}}
         elif "bewertest eine Automation" in sys_prompt:
             out = {"verdict": "verbesserbar", "summary": "Test", "issues": ["x"], "suggestion": "y"}
+        elif "Bewegungsmelder, der noch in" in sys_prompt:
+            user_msg = body["messages"][-1]["content"]
+            trig = re.search(r"Auslöser\): (\S+) ", user_msg).group(1)
+            act = re.search(r"Geräte im selben Bereich:\n- (\S+):", user_msg).group(1)
+            out = {"title": "Licht bei Bewegung", "explanation": "Schaltet das Licht bei Bewegung ein.",
+                   "config": {"alias": "Licht bei Bewegung",
+                              "description": "Schaltet das Licht ein, sobald Bewegung erkannt wird, und nach "
+                                             "5 Minuten ohne Bewegung wieder aus.",
+                              "triggers": [{"trigger": "state", "entity_id": trig, "to": "on"}],
+                              "actions": [{"action": f"{act.split('.', 1)[0]}.turn_on", "target": {"entity_id": act}}]}}
         else:
             out = {"reply": "Ich schlage vor, den Konflikt zu beheben.",
                    "proposal": {"target_id": "a2", "title": "Flur aus entschärfen",

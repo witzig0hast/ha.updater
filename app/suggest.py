@@ -4,7 +4,7 @@ import hashlib
 import re
 from collections import defaultdict
 
-from . import chat, db, llm, store
+from . import chat, db, llm, opportunities, store
 from .analyzer import cfg_hash, item_key, parse_ts
 
 # Befunde, bei denen eine Konfigurationsänderung sinnvoll ist (der Rest wird als Hinweis angezeigt)
@@ -28,6 +28,21 @@ Vorgang). Was sich ändert und warum gehört ausschließlich ins Feld `explanati
 - Wenn sich das Problem nicht sicher automatisch lösen lässt, setze config auf null.
 Antworte NUR mit JSON:
 {"title": "kurzer Titel, max. 8 Wörter", "explanation": "1-2 Sätze für Laien: was wird geändert und warum", \
+"config": { ... } oder null}"""
+
+
+NEW_SYSTEM = """Du bist Experte für Home-Assistant-Automationen. Der Nutzer hat einen Bewegungsmelder, der noch in \
+KEINER Automation als Auslöser benutzt wird, obwohl im selben Bereich schaltbare Geräte stehen. Schlage GENAU EINE \
+einfache, sinnvolle neue Automation vor, die beim Auslösen des Bewegungsmelders eines oder mehrere der genannten \
+Geräte schaltet. Regeln:
+- Verwende NUR die genannten Entity-IDs. Erfinde keine.
+- Bevorzuge die naheliegendste, simpelste Lösung (z. B. Licht an bei Bewegung, nach einer Wartezeit ohne Bewegung \
+wieder aus). Nutze einen zweiten State-Trigger für „keine Bewegung mehr“ statt Polling oder `wait_template`.
+- `alias` und `description` beschreiben, WAS die Automation tut (für den Nutzer) – niemals, dass du sie gerade \
+vorgeschlagen oder erstellt hast.
+- Wenn aus den gegebenen Geräten keine sinnvolle Automation hervorgeht, setze config auf null.
+Antworte NUR mit JSON:
+{"title": "kurzer Titel, max. 8 Wörter", "explanation": "1-2 Sätze für Laien: was die neue Automation tun würde", \
 "config": { ... } oder null}"""
 
 
@@ -154,8 +169,47 @@ def propose_stale_entities(brain: dict, stale_days: int) -> int:
     return n
 
 
+def _opp_hash(key: str) -> str:
+    return hashlib.sha1(key.encode()).hexdigest()[:12]
+
+
+def new_candidates(brain: dict, limit: int) -> list[dict]:
+    """Noch nicht vorgeschlagene (oder endgültig verworfene) Automatisierungs-Lücken, regelbasiert gefunden."""
+    out = []
+    for opp in opportunities.find_opportunities(brain):
+        h = _opp_hash(opp["key"])
+        if db.q1("SELECT id FROM proposals WHERE source='auto' AND target_id='new' AND cfg_hash=? "
+                 "AND status IN ('pending', 'rejected', 'applied')", (h,)):
+            continue
+        out.append(opp)
+    return out[:limit]
+
+
+async def suggest_new_automation(settings: dict, brain: dict, opp: dict) -> int | None:
+    ent_txt = "\n".join(f"- {d['entity_id']}: {d['name']} (Zustand {d['state']})"
+                        for d in (store.describe_entity(brain, e) for e in opp["actuators"]))
+    user = (f"Bereich: {opp['area']}\nBewegungsmelder (Auslöser): {opp['trigger']} ({opp['trigger_name']})\n"
+            f"Schaltbare Geräte im selben Bereich:\n{ent_txt}")
+    raw = await llm.chat(settings, [{"role": "system", "content": NEW_SYSTEM}, {"role": "user", "content": user}],
+                         num_predict=1200)
+    data = llm.parse_json(raw)
+    if not data or not isinstance(data.get("config"), dict):
+        return None
+    cfg = data["config"]
+    ok, warns = chat.validate_config(brain, cfg)
+    if not ok:
+        return None
+    h = _opp_hash(opp["key"])
+    analysis_old = (f"Noch keine Automation vorhanden.\nBereich: {opp['area']}\n"
+                    f"Bewegungsmelder {opp['trigger']} wird bisher von keiner Automation als Auslöser genutzt.")
+    return chat.create_proposal(None, "new", str(data.get("title") or opp["title"])[:80],
+                                str(data.get("explanation") or ""), None, cfg, warns, "auto", h, "update",
+                                analysis_old, store.describe_automation(brain, cfg))
+
+
 def retire_stale(brain: dict) -> None:
     """Automatische Vorschläge, deren Ziel sich inzwischen geändert hat (oder nicht mehr existiert), sind überholt."""
+    new_opp_hashes = {_opp_hash(o["key"]) for o in opportunities.find_opportunities(brain)}
     for p in db.q("SELECT id, target_id, cfg_hash, target_kind FROM proposals WHERE source='auto' AND status='pending'"):
         if p["target_kind"] == "entity":
             e = brain["entities"].get(p["target_id"])
@@ -163,6 +217,12 @@ def retire_stale(brain: dict) -> None:
             h = hashlib.sha1(f"{'orphaned' if e and e['state'] is None else 'unavailable'}:"
                              f"{e['state'] if e else ''}".encode()).hexdigest()[:12]
             if not still or h != p["cfg_hash"]:
+                db.x("UPDATE proposals SET status='superseded' WHERE id=?", (p["id"],))
+            continue
+        if p["target_id"] == "new":
+            # Neue Automation (noch nicht angewendet): überholt, sobald die Lücke anderweitig geschlossen wurde
+            # (z. B. jemand hat den Sensor inzwischen manuell verdrahtet) oder sie nicht mehr existiert.
+            if p["cfg_hash"] not in new_opp_hashes:
                 db.x("UPDATE proposals SET status='superseded' WHERE id=?", (p["id"],))
             continue
         it = store.find_item(brain, "automation", p["target_id"])

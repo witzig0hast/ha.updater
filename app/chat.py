@@ -194,7 +194,7 @@ async def handle_message(settings: dict, conv_id: int | None, message: str,
                 proposal_id = create_proposal(
                     conv_id, target, str(prop.get("title") or cfg["alias"]), str(prop.get("explanation") or ""),
                     old, cfg, warns, "chat", cfg_hash(old) if old else None, "update",
-                    store.describe_automation(brain, old), store.describe_automation(brain, cfg))
+                    store.describe_automation(brain, old) if old else None, store.describe_automation(brain, cfg))
                 if revise_proposal:
                     db.x("UPDATE proposals SET status='superseded' WHERE id=? AND status='pending'", (revise_proposal,))
             else:

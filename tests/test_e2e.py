@@ -228,6 +228,91 @@ def test_normal_description_has_no_meta_warning(client):
     assert ok and not any("Änderungsprotokoll" in w for w in warns)
 
 
+def test_proposes_new_automation_for_unused_motion_sensor(client):
+    """Bewegungsmelder ohne jede Automation, aber mit Licht im selben Bereich -> eigener Vorschlag für eine NEUE Automation."""
+    from tests import fakes
+    wait(client, "/api/scan/status", "running")
+    fakes.AREA_REGISTRY.append({"area_id": "kueche", "name": "Küche"})
+    fakes.ENTITY_REGISTRY.append({"entity_id": "light.kueche", "id": "k" * 32, "area_id": "kueche", "platform": "fake"})
+    fakes.ENTITY_REGISTRY.append({"entity_id": "binary_sensor.kueche_bewegung", "id": "m" * 32, "area_id": "kueche",
+                                  "platform": "fake"})
+    fakes.STATES.append({"entity_id": "binary_sensor.kueche_bewegung", "state": "off",
+                         "attributes": {"friendly_name": "Küche Bewegung", "device_class": "motion"}})
+
+    assert client.post("/api/run").status_code == 200
+    for _ in range(100):
+        h = client.get("/api/home").json()
+        if not h["run"]["running"]:
+            break
+        time.sleep(0.1)
+    assert h["run"]["error"] is None, h["run"]
+
+    ideas = [p for p in h["proposals"] if p["source"] == "auto" and p["is_new"] and p["target_id"] == "new"]
+    assert ideas, h
+    idea = ideas[0]
+    assert "binary_sensor.kueche_bewegung" in idea["new_yaml"] and "light.kueche" in idea["new_yaml"]
+    assert idea["old_yaml"] == "" and idea["analysis_old"] and "Noch keine Automation" in idea["analysis_old"]
+    assert idea["diff"].split("\n")[3].startswith("+")        # reiner Neuanlage-Diff, nichts wird entfernt
+    assert not any(l.startswith("-") and not l.startswith("---") for l in idea["diff"].split("\n"))
+
+    # Zweiter Lauf: keine Dublette
+    n = len(ideas)
+    client.post("/api/run")
+    for _ in range(100):
+        if not client.get("/api/home").json()["run"]["running"]:
+            break
+        time.sleep(0.1)
+    assert len([p for p in client.get("/api/home").json()["proposals"]
+               if p["source"] == "auto" and p["is_new"] and p["target_id"] == "new"]) == n
+
+    # Verwerfen -> taucht nicht wieder auf
+    client.post(f"/api/proposals/{idea['id']}/reject")
+    client.post("/api/run")
+    for _ in range(100):
+        if not client.get("/api/home").json()["run"]["running"]:
+            break
+        time.sleep(0.1)
+    assert idea["id"] not in [p["id"] for p in client.get("/api/home").json()["proposals"]]
+
+
+def test_new_automation_idea_retires_once_wired_manually(client):
+    """Nutzt jemand den Sensor später selbst als Trigger, ist die Lücke geschlossen -> Vorschlag wird überholt."""
+    from tests import fakes
+    wait(client, "/api/scan/status", "running")
+    fakes.AREA_REGISTRY.append({"area_id": "bad", "name": "Bad"})
+    fakes.ENTITY_REGISTRY.append({"entity_id": "light.bad", "id": "b" * 32, "area_id": "bad", "platform": "fake"})
+    fakes.ENTITY_REGISTRY.append({"entity_id": "binary_sensor.bad_bewegung", "id": "c" * 32, "area_id": "bad",
+                                  "platform": "fake"})
+    fakes.STATES.append({"entity_id": "light.bad", "state": "off", "attributes": {"friendly_name": "Bad Licht"}})
+    fakes.STATES.append({"entity_id": "binary_sensor.bad_bewegung", "state": "off",
+                         "attributes": {"friendly_name": "Bad Bewegung", "device_class": "motion"}})
+
+    client.post("/api/run")
+    for _ in range(100):
+        if not client.get("/api/home").json()["run"]["running"]:
+            break
+        time.sleep(0.1)
+    before = [p for p in client.get("/api/home").json()["proposals"]
+             if p["source"] == "auto" and p["target_id"] == "new" and "bad" in p["new_yaml"]]
+    assert before, "Erwartete eine neue Automationsidee fürs Bad"
+    pid = before[0]["id"]
+
+    # Jemand verdrahtet den Sensor jetzt von Hand
+    fakes.STATES.append({"entity_id": "automation.bad_manuell", "state": "on",
+                         "attributes": {"id": "a20", "friendly_name": "Bad manuell"}})
+    fakes.CONFIGS["automation"]["a20"] = {"id": "a20", "alias": "Bad manuell",
+        "triggers": [{"trigger": "state", "entity_id": "binary_sensor.bad_bewegung", "to": "on"}],
+        "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.bad"}}]}
+
+    client.post("/api/run")
+    for _ in range(100):
+        if not client.get("/api/home").json()["run"]["running"]:
+            break
+        time.sleep(0.1)
+    status = {p["id"]: p["status"] for p in client.get("/api/proposals").json()}
+    assert status[pid] == "superseded"
+
+
 def test_stale_entities_get_checked_and_can_be_deleted(client):
     """Regelbasiert, unabhängig vom KI-Limit: verwaiste/lange nicht verfügbare Entitäten (und Geräte) finden."""
     from tests import fakes
